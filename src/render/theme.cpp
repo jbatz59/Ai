@@ -134,12 +134,35 @@ PresetDef MakeChroma() {
   return {p, true};
 }
 
+// iOS dark mode: system colours from Apple's Human Interface Guidelines (dark appearance).
+PresetDef MakeIOS() {
+  Palette p{};
+  p.bg = Rgb(0x000000, 0.94f);       // systemBackground
+  p.bgAlt = Rgb(0x000000);
+  p.panel = Rgb(0x1C1C1E);           // secondarySystemGroupedBackground (cells)
+  p.panelHover = Rgb(0x2C2C2E);      // tertiary fill
+  p.border = Rgb(0x38383A);          // separator
+  p.text = Rgb(0xFFFFFF);            // label
+  p.textDim = Rgb(0x98989F);         // secondaryLabel
+  p.textFaint = Rgb(0x5C5C62);       // tertiaryLabel
+  p.accent = Rgb(0x0A84FF);          // systemBlue
+  p.accentHover = Rgb(0x409CFF);
+  p.accentActive = Rgb(0x0070E0);
+  p.accentDim = Rgb(0x0A3A6B);
+  p.danger = Rgb(0xFF453A);          // systemRed
+  p.warning = Rgb(0xFF9F0A);         // systemOrange
+  p.success = Rgb(0x30D158);         // systemGreen
+  p.info = Rgb(0x64D2FF);            // systemTeal
+  return {p, true};
+}
+
 PresetDef Make(Preset p) {
   switch (p) {
     case Preset::Midnight: return MakeMidnight();
     case Preset::Bordeaux: return MakeBordeaux();
     case Preset::Light: return MakeLight();
     case Preset::Chroma: return MakeChroma();
+    case Preset::iOS: return MakeIOS();
     case Preset::Noir:
     default: return MakeNoir();
   }
@@ -151,13 +174,14 @@ Preset Sanitize(Preset p) {
     case Preset::Midnight:
     case Preset::Bordeaux:
     case Preset::Light:
-    case Preset::Chroma: return p;
+    case Preset::Chroma:
+    case Preset::iOS: return p;
   }
-  return Preset::Chroma;
+  return kDefaultPreset;
 }
 
-Palette g_palette = MakeChroma().pal;
-Preset g_current = Preset::Chroma;
+Palette g_palette = MakeIOS().pal;
+Preset g_current = Preset::iOS;
 float g_hue = 0.75f;
 float g_saturation = 0.85f;
 float g_speed = 0.12f;
@@ -307,7 +331,49 @@ void Apply(Preset preset, float uiScale) {
     style.PopupBorderSize = 1;
   }
 
+  if (preset == Preset::iOS) {
+    style.WindowPadding = ImVec2(16, 16);
+    style.FramePadding = ImVec2(12, 8);
+    style.ItemSpacing = ImVec2(10, 10);
+    style.WindowRounding = 20;
+    style.ChildRounding = 14;
+    style.FrameRounding = 10;
+    style.PopupRounding = 14;
+    style.GrabRounding = 20;
+    style.TabRounding = 10;
+    style.ScrollbarSize = 6;
+    style.ScrollbarRounding = 6;
+    style.GrabMinSize = 18;
+    style.WindowBorderSize = 0;
+    style.ChildBorderSize = 0;
+    style.PopupBorderSize = 0;
+  }
+
   SetColors(style.Colors, def.pal, def.dark);
+  if (preset == Preset::iOS) {
+    // Fills and controls follow UIKit: grey fills inside cells, white slider knobs.
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_FrameBg] = Rgb(0x2C2C2E);
+    c[ImGuiCol_FrameBgHovered] = Rgb(0x3A3A3C);
+    c[ImGuiCol_FrameBgActive] = Rgb(0x48484A);
+    c[ImGuiCol_Button] = Rgb(0x2C2C2E);
+    c[ImGuiCol_ButtonHovered] = Rgb(0x3A3A3C);
+    c[ImGuiCol_ButtonActive] = Rgb(0x48484A);
+    c[ImGuiCol_SliderGrab] = Rgb(0xFFFFFF);
+    c[ImGuiCol_SliderGrabActive] = Rgb(0xE5E5EA);
+    c[ImGuiCol_ScrollbarGrab] = Rgb(0x48484A);
+    c[ImGuiCol_ScrollbarBg] = Rgb(0x000000, 0.0f);
+    c[ImGuiCol_PopupBg] = Rgb(0x1C1C1E, 0.98f);
+    c[ImGuiCol_TitleBg] = Rgb(0x1C1C1E);
+    c[ImGuiCol_TitleBgActive] = Rgb(0x1C1C1E);
+    c[ImGuiCol_Header] = Rgb(0x0A84FF, 0.22f);
+    c[ImGuiCol_HeaderHovered] = Rgb(0x0A84FF, 0.32f);
+    c[ImGuiCol_HeaderActive] = Rgb(0x0A84FF, 0.45f);
+    c[ImGuiCol_TableHeaderBg] = Rgb(0x2C2C2E);
+    c[ImGuiCol_ResizeGrip] = Rgb(0x000000, 0.0f);
+    c[ImGuiCol_ResizeGripHovered] = Rgb(0x8E8E93, 0.35f);
+    c[ImGuiCol_ResizeGripActive] = Rgb(0x8E8E93, 0.6f);
+  }
 
   style.ScaleAllSizes(scale);
   style.FontScaleMain = scale;
@@ -323,9 +389,10 @@ const char* PresetName(Preset p) {
     case Preset::Midnight: return "Midnight";
     case Preset::Bordeaux: return "Bordeaux";
     case Preset::Light: return "Light";
-    case Preset::Chroma: return "Chroma";
+    case Preset::Chroma: return "Chroma RGB";
+    case Preset::iOS: return "iOS";
   }
-  return "Chroma";
+  return "iOS";
 }
 
 ImU32 U32(const ImVec4& c, float alphaMul) {

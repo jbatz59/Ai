@@ -185,8 +185,59 @@ bool LinkButton(const char* label) {
   return clicked;
 }
 
+// ---- iOS-style icon badges ---------------------------------------------------------------------------
+
+bool IosLook() { return th::Current() == th::Preset::iOS; }
+
+// Settings-app colours per section.
+ImVec4 TintFor(int category, Page page = Page::Count) {
+  auto rgb = [](uint32_t v) { return ImVec4(((v >> 16) & 0xFF) / 255.0f, ((v >> 8) & 0xFF) / 255.0f, (v & 0xFF) / 255.0f, 1.0f); };
+  if (category == kNoCategory) {
+    switch (page) {
+      case Page::Home: return rgb(0x0A84FF);
+      case Page::Scripts: return rgb(0xFFD60A);
+      case Page::About: return rgb(0x0A84FF);
+      default: return rgb(0x8E8E93);
+    }
+  }
+  switch (static_cast<Category>(category)) {
+    case Category::Player: return rgb(0x0A84FF);
+    case Category::Vehicle: return rgb(0xFF9F0A);
+    case Category::Weapons: return rgb(0xFF453A);
+    case Category::World: return rgb(0x30D158);
+    case Category::Teleport: return rgb(0xBF5AF2);
+    case Category::Camera: return rgb(0x8E8E93);
+    case Category::Visuals: return rgb(0x64D2FF);
+    case Category::Fun: return rgb(0xFF375F);
+    case Category::CheatTable: return rgb(0x5E5CE6);
+    case Category::Scripts: return rgb(0xFFD60A);
+    case Category::Count: break;
+  }
+  return rgb(0x8E8E93);
+}
+
+// Rounded-square badge with a white glyph (or the first letter when icon fonts are missing).
+void DrawIconBadge(ImDrawList* dl, ImVec2 topLeft, float size, const ImVec4& tint, const char* icon, const char* label) {
+  dl->AddRectFilled(topLeft, topLeft + ImVec2(size, size), Col(tint), size * 0.26f);
+  ImFont* font = render::GetFonts().body ? render::GetFonts().body : ImGui::GetFont();
+  char letter[2] = {label && label[0] ? label[0] : '?', '\0'};
+  const char* glyph = HasIcons() ? icon : letter;
+  const float gs = size * (HasIcons() ? 0.58f : 0.62f);
+  const ImVec2 ts = font->CalcTextSizeA(gs, FLT_MAX, 0.0f, glyph);
+  dl->AddText(font, gs, topLeft + ImVec2((size - ts.x) * 0.5f, (size - ts.y) * 0.5f), IM_COL32_WHITE, glyph);
+}
+
 void PageHeader(const char* icon, const char* title, const std::string& subtitle) {
   const auto& p = th::Colors();
+  if (IosLook()) {
+    // iOS large title.
+    PushTitle(1.95f);
+    ImGui::TextUnformatted(title);
+    PopFont();
+    if (!subtitle.empty()) TextWrappedColored(p.textDim, subtitle);
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y * 0.6f));
+    return;
+  }
   if (HasIcons()) {
     PushBodySize(1.45f);
     ImGui::PushStyleColor(ImGuiCol_Text, p.accent);
@@ -225,34 +276,10 @@ float ControlColumnWidth() {
   return std::max(toggleW, ButtonWidth(IconLabel(CG_ICON_PLAY, "Run")));
 }
 
-void DrawFeatureControl(Feature& f, bool available, float width) {
-  const auto& p = th::Colors();
-  switch (f.GetKind()) {
-    case Kind::Toggle: {
-      bool on = f.Enabled();
-      if (ToggleSwitch("##on", &on, available)) QueueFeatureSet(f.Id(), on);
-      if (available) ImGui::SetItemTooltip("%s", on ? "On - click to switch off" : "Off - click to switch on");
-      break;
-    }
-    case Kind::Action: {
-      if (!available) ImGui::BeginDisabled();
-      if (AccentButton(IconLabel(CG_ICON_PLAY, "Run").c_str(), ImVec2(width, 0.0f))) QueueFeatureTrigger(f.Id());
-      if (!available) ImGui::EndDisabled();
-      break;
-    }
-    case Kind::Panel: {
-      ImGui::AlignTextToFramePadding();
-      ImGui::PushStyleColor(ImGuiCol_Text, available ? p.accent : p.textFaint);
-      Icon(features::CategoryIcon(f.GetCategory()), "");
-      ImGui::PopStyleColor();
-      break;
-    }
-  }
-}
-
 void DrawFeatureCard(Feature& f) {
   const auto& p = th::Colors();
   const ImGuiStyle& style = ImGui::GetStyle();
+  const float s = UiScale();
   const std::string& id = f.Id();
   ImGui::PushID(id.c_str());
 
@@ -269,49 +296,49 @@ void DrawFeatureCard(Feature& f) {
 
   const bool available = f.Available();
   const Kind kind = f.GetKind();
-  const bool hasSettings = kind != Kind::Panel && f.HasSettings();
-  const bool expanded = kind == Kind::Panel || (hasSettings && g_menu.expanded.count(id) != 0);
+  const bool expanded = kind == Kind::Panel || g_menu.expanded.count(id) != 0;
+  const float frameH = ImGui::GetFrameHeight();
+  const float badge = std::round(frameH * 0.92f);
   const float ctrlW = ControlColumnWidth();
+  const auto toggleExpanded = [&] {
+    if (g_menu.expanded.count(id)) g_menu.expanded.erase(id);
+    else g_menu.expanded.insert(id);
+  };
 
+  // Settings-app cell: [badge] [title / subtitle] ........ [control] [chevron]
   BeginCard("##card");
-  if (ImGui::BeginTable("##row", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoPadOuterX)) {
-    ImGui::TableSetupColumn("ctrl", ImGuiTableColumnFlags_WidthFixed, ctrlW);
+  if (ImGui::BeginTable("##row", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoPadOuterX)) {
+    ImGui::TableSetupColumn("badge", ImGuiTableColumnFlags_WidthFixed, badge);
     ImGui::TableSetupColumn("text", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("side", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn("ctrl", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn("chev", ImGuiTableColumnFlags_WidthFixed);
     ImGui::TableNextRow();
 
     ImGui::TableSetColumnIndex(0);
-    DrawFeatureControl(f, available, ctrlW);
+    {
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      ImVec4 tint = TintFor(static_cast<int>(f.GetCategory()));
+      if (!available) tint = Mix(tint, p.panelHover, 0.55f);
+      DrawIconBadge(ImGui::GetWindowDrawList(), at + ImVec2(0.0f, 2.0f * s), badge, tint, features::CategoryIcon(f.GetCategory()),
+                    f.Name().c_str());
+      ImGui::Dummy(ImVec2(badge, badge + 4.0f * s));
+    }
 
     ImGui::TableSetColumnIndex(1);
-    ImGui::AlignTextToFramePadding();
-    PushBold();
     TextColored(available ? p.text : p.textDim, f.Name());
-    PopFont();
-    if (hasSettings && ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-      if (expanded) g_menu.expanded.erase(id);
-      else g_menu.expanded.insert(id);
-    }
-    if (kind == Kind::Toggle && f.Enabled()) {
-      ImGui::SameLine();
-      Badge("ON", Col(WithAlpha(p.success, 0.22f)), Col(Mix(p.success, p.text, 0.25f)));
-    }
+    if (kind != Kind::Panel && ImGui::IsItemClicked(ImGuiMouseButton_Left)) toggleExpanded();
     if (!f.Description().empty()) {
+      PushBodySize(0.9f);
       ImGui::PushStyleColor(ImGuiCol_Text, available ? p.textDim : p.textFaint);
       ImGui::PushTextWrapPos(0.0f);
       ImGui::TextUnformatted(f.Description().c_str());
       ImGui::PopTextWrapPos();
       ImGui::PopStyleColor();
+      PopFont();
     }
 
     ImGui::TableSetColumnIndex(2);
-    bool first = true;
-    const auto next = [&first, &style] {
-      if (!first) ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
-      first = false;
-    };
     if (!available) {
-      next();
       ImGui::AlignTextToFramePadding();
       ImGui::PushStyleColor(ImGuiCol_Text, p.warning);
       Icon(CG_ICON_WARNING, "!");
@@ -323,40 +350,81 @@ void DrawFeatureCard(Feature& f) {
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
       }
-      next();
-      if (ImGui::SmallButton("Bindings")) OpenWindow("tools.bindings");
-      ImGui::SetItemTooltip("Open the Bindings window to see which symbols are missing");
+      ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
     }
-    next();
-    FavoriteButton(f);
+    if (kind == Kind::Toggle) {
+      bool on = f.Enabled();
+      if (ToggleSwitch("##on", &on, available)) QueueFeatureSet(f.Id(), on);
+    } else if (kind == Kind::Action) {
+      if (!available) ImGui::BeginDisabled();
+      // iOS tinted button: accent text on a translucent accent fill.
+      ImGui::PushStyleColor(ImGuiCol_Button, WithAlpha(p.accent, 0.16f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, WithAlpha(p.accent, 0.26f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(p.accent, 0.36f));
+      ImGui::PushStyleColor(ImGuiCol_Text, p.accent);
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, frameH * 0.5f);
+      if (ImGui::Button("Run", ImVec2(std::max(ctrlW * 0.8f, 56.0f * s), 0.0f))) QueueFeatureTrigger(f.Id());
+      ImGui::PopStyleVar();
+      ImGui::PopStyleColor(4);
+      if (!available) ImGui::EndDisabled();
+    } else {
+      FavoriteButton(f);
+    }
+
+    ImGui::TableSetColumnIndex(3);
     if (kind != Kind::Panel) {
-      next();
-      if (HotkeyButton("##key", &f.Key())) features::Registry::Get().Save();
-    }
-    if (hasSettings) {
-      next();
-      ImGui::PushStyleColor(ImGuiCol_Button, WithAlpha(p.panelHover, 0.0f));
-      if (ImGui::ArrowButton("##more", expanded ? ImGuiDir_Down : ImGuiDir_Right)) {
-        if (expanded) g_menu.expanded.erase(id);
-        else g_menu.expanded.insert(id);
+      // UITableView disclosure chevron: thin stroke, rotates when the details are open.
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      const float bw = frameH * 0.8f;
+      if (ImGui::InvisibleButton("##more", ImVec2(bw, frameH))) toggleExpanded();
+      const bool hov = ImGui::IsItemHovered();
+      ImGui::SetItemTooltip("%s", expanded ? "Hide details" : "Details, hotkey and favourite");
+      const ImVec2 c = at + ImVec2(bw * 0.5f, frameH * 0.5f);
+      const float k = frameH * 0.16f;
+      const ImU32 col = Col(hov ? p.textDim : p.textFaint);
+      ImDrawList* cdl = ImGui::GetWindowDrawList();
+      if (expanded) {
+        const ImVec2 pts[3] = {c + ImVec2(-k, -k * 0.5f), c + ImVec2(0, k * 0.5f), c + ImVec2(k, -k * 0.5f)};
+        cdl->AddPolyline(pts, 3, col, 2.0f * s);
+      } else {
+        const ImVec2 pts[3] = {c + ImVec2(-k * 0.5f, -k), c + ImVec2(k * 0.5f, 0), c + ImVec2(-k * 0.5f, k)};
+        cdl->AddPolyline(pts, 3, col, 2.0f * s);
       }
-      ImGui::PopStyleColor();
-      ImGui::SetItemTooltip("%s", expanded ? "Hide settings" : "Settings");
     }
     ImGui::EndTable();
   }
 
   if (expanded) {
-    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y * 0.25f));
+    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y * 0.15f));
+    const float indent = badge + style.CellPadding.x * 2.0f;
     const ImVec2 a = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddLine(a, ImVec2(a.x + ImGui::GetContentRegionAvail().x, a.y), Col(p.border));
-    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y * 0.5f));
-    const float indent = kind == Kind::Panel ? 0.0f : ctrlW + style.CellPadding.x * 2.0f;
-    if (indent > 0.0f) ImGui::Indent(indent);
-    if (!available) ImGui::BeginDisabled();
-    RunGuarded(id.c_str(), [&f] { f.DrawSettings(); });
-    if (!available) ImGui::EndDisabled();
-    if (indent > 0.0f) ImGui::Unindent(indent);
+    // Inset hairline separator, as between iOS grouped cells.
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + indent, a.y), ImVec2(a.x + ImGui::GetContentRegionAvail().x, a.y), Col(p.border));
+    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y * 0.4f));
+    ImGui::Indent(indent);
+    if (f.HasSettings() || kind == Kind::Panel) {
+      if (!available) ImGui::BeginDisabled();
+      RunGuarded(id.c_str(), [&f] { f.DrawSettings(); });
+      if (!available) ImGui::EndDisabled();
+    }
+    if (kind != Kind::Panel) {
+      if (f.HasSettings()) ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y * 0.3f));
+      ImGui::AlignTextToFramePadding();
+      TextColored(p.textDim, "Hotkey");
+      ImGui::SameLine();
+      if (HotkeyButton("##key", &f.Key())) features::Registry::Get().Save();
+      ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
+      ImGui::AlignTextToFramePadding();
+      TextColored(p.textDim, "Favourite");
+      ImGui::SameLine();
+      FavoriteButton(f);
+    }
+    if (!available) {
+      const std::string reason = f.UnavailableReason();
+      TextWrappedColored(p.warning, reason.empty() ? std::string("Unavailable") : reason);
+      if (LinkButton("Open Game Bindings")) OpenWindow("tools.bindings");
+    }
+    ImGui::Unindent(indent);
   }
   EndCard();
 
@@ -367,7 +435,7 @@ void DrawFeatureCard(Feature& f) {
     const double now = ImGui::GetTime();
     if (now < g_menu.highlightUntil) {
       const float t = static_cast<float>((g_menu.highlightUntil - now) / 1.6);
-      ImGui::GetWindowDrawList()->AddRect(cardMin, cardMax, Col(p.accent, std::clamp(t, 0.0f, 1.0f)), 8.0f * UiScale(), 2.0f);
+      ImGui::GetWindowDrawList()->AddRect(cardMin, cardMax, Col(p.accent, std::clamp(t, 0.0f, 1.0f)), 12.0f * s, 2.0f);
     } else {
       g_menu.highlightFeature.clear();
     }
@@ -1125,7 +1193,9 @@ void DrawHeader(float height) {
   dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + height), Col(p.bgAlt), style.WindowRounding, ImDrawFlags_RoundCornersTop);
   const float mid = wp.x + ws.x * 0.5f;
   const float ry = wp.y + height - 1.0f;
-  if (th::ChromaActive()) {
+  if (IosLook()) {
+    dl->AddLine(ImVec2(wp.x, ry), ImVec2(wp.x + ws.x, ry), Col(p.border));
+  } else if (th::ChromaActive()) {
     th::DrawChromaBar(dl, ImVec2(wp.x, ry - 1.0f * s), ImVec2(wp.x + ws.x, ry + 1.0f), 0.95f);
   } else {
     dl->AddRectFilledMultiColor(ImVec2(wp.x, ry), ImVec2(mid, ry + 1.0f), Col(p.accent, 0.0f), Col(p.accent, 0.85f), Col(p.accent, 0.85f),
@@ -1141,7 +1211,12 @@ void DrawHeader(float height) {
   const float titleSize = ImGui::GetFontSize();
   PopFont();
   const float titleY = wp.y + (height - titleSize) * 0.5f;
-  if (th::ChromaActive()) {
+  if (IosLook()) {
+    const char* word = "Chroma";
+    const float ws2 = titleSize * 1.05f;
+    dl->AddText(titleFont, ws2, ImVec2(x, titleY - (ws2 - titleSize) * 0.5f), Col(p.text), word);
+    x += titleFont->CalcTextSizeA(ws2, FLT_MAX, 0.0f, word).x;
+  } else if (th::ChromaActive()) {
     // Per-letter rainbow wordmark that flows with the chroma cycle.
     const char* word = "CHROMA";
     float cx = x;
@@ -1264,13 +1339,25 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
     const bool selected = g_menu.page == page;
     if (pressed) NavigateTo(page);
     if (selected) selectedY = pos.y;
-    if (selected) dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(Mix(p.bgAlt, p.accentDim, 0.35f)), style.FrameRounding);
-    else if (hovered) dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.panelHover, 0.7f), style.FrameRounding);
-    const ImU32 col = Col(selected ? p.accent : hovered ? p.text : p.textDim);
+    const bool ios = IosLook();
+    if (ios) {
+      // iPadOS sidebar: selected row is a solid blue pill with white text.
+      if (selected) dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.accent), style.FrameRounding);
+      else if (hovered) dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.panelHover, 0.8f), style.FrameRounding);
+    } else if (selected) {
+      dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(Mix(p.bgAlt, p.accentDim, 0.35f)), style.FrameRounding);
+    } else if (hovered) {
+      dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.panelHover, 0.7f), style.FrameRounding);
+    }
+    const ImU32 col = ios ? Col(p.text) : Col(selected ? p.accent : hovered ? p.text : p.textDim);
     const float fs = ImGui::GetFontSize();
     float tx = pos.x + 12.0f * s;
     const float ty = pos.y + (rowH - fs) * 0.5f;
-    if (HasIcons()) {
+    if (ios) {
+      const float bs = std::round(fs * 1.3f);
+      DrawIconBadge(dl, ImVec2(pos.x + 8.0f * s, pos.y + (rowH - bs) * 0.5f), bs, TintFor(info.category, page), info.icon, info.name);
+      tx = pos.x + 8.0f * s + bs + 10.0f * s;
+    } else if (HasIcons()) {
       dl->AddText(render::GetFonts().body, fs, ImVec2(tx, ty), col, info.icon);
       tx += fs * 1.7f;
     }
@@ -1302,8 +1389,8 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
   item(Page::Settings);
   item(Page::About);
 
-  // Animated selection marker.
-  if (selectedY >= 0.0f) {
+  // Animated selection marker (the iOS look uses a filled pill instead).
+  if (selectedY >= 0.0f && !IosLook()) {
     g_menu.barY = g_menu.barY < 0.0f ? selectedY : Approach(g_menu.barY, selectedY, 18.0f);
     const float x = ImGui::GetWindowPos().x + 3.0f * s;
     const float inset = rowH * 0.22f;

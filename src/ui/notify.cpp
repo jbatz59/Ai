@@ -125,7 +125,7 @@ void Accept(std::vector<Toast>& incoming) {
   }
 }
 
-void DrawToast(Toast& t, const ImVec2& anchor, float alpha, bool interactive) {
+void DrawToast(Toast& t, const ImVec2& anchor, const ImVec2& pivot, float alpha, bool interactive) {
   const auto& p = th::Colors();
   const float s = detail::UiScale();
   const float width = 340.0f * s;
@@ -134,7 +134,7 @@ void DrawToast(Toast& t, const ImVec2& anchor, float alpha, bool interactive) {
 
   char name[32];
   std::snprintf(name, sizeof(name), "##cg.toast.%d", t.slot);
-  ImGui::SetNextWindowPos(anchor, ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+  ImGui::SetNextWindowPos(anchor, ImGuiCond_Always, pivot);
   ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, FLT_MAX));
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
@@ -142,7 +142,7 @@ void DrawToast(Toast& t, const ImVec2& anchor, float alpha, bool interactive) {
   if (!interactive) flags |= ImGuiWindowFlags_NoInputs;
 
   ImGui::PushStyleVar(ImGuiStyleVar_Alpha, std::clamp(alpha, 0.0f, 1.0f));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * s);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, (th::Current() == th::Preset::iOS ? 18.0f : 8.0f) * s);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * s + barW, 10.0f * s));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, detail::WithAlpha(p.panel, 0.97f));
@@ -265,7 +265,14 @@ void Draw() {
     const float in = EaseOut(t.appear);
     const float out = EaseOut(t.exit);
     const float slide = (1.0f - in) * 120.0f * s + out * 60.0f * s;
-    DrawToast(t, ImVec2(corner.x + slide, corner.y - t.y), in * (1.0f - out), interactive);
+    if (th::Current() == th::Preset::iOS) {
+      // iOS banners: top centre, dropping down from above, newest on top.
+      const float drop = (1.0f - in) * 50.0f * s + out * 30.0f * s;
+      DrawToast(t, ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + margin + t.y - drop), ImVec2(0.5f, 0.0f),
+                in * (1.0f - out), interactive);
+    } else {
+      DrawToast(t, ImVec2(corner.x + slide, corner.y - t.y), ImVec2(1.0f, 1.0f), in * (1.0f - out), interactive);
+    }
     stack += (height + spacing) * (1.0f - out);
   }
 

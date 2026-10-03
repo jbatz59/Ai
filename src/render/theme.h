@@ -12,8 +12,9 @@ struct Palette {
   ImVec4 danger, warning, success, info;                 // oxblood, amber, green, steel blue
 };
 
-enum class Preset { Noir, Midnight, Bordeaux, Light, Chroma };
-inline constexpr int kPresetCount = 5;
+enum class Preset { Noir, Midnight, Bordeaux, Light, Chroma, iOS };
+inline constexpr int kPresetCount = 6;
+inline constexpr Preset kDefaultPreset = Preset::iOS;
 
 void Apply(Preset preset, float uiScale);
 const Palette& Colors();

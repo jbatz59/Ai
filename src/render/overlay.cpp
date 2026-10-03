@@ -220,7 +220,7 @@ bool InitFor(IDXGISwapChain* sc) {
 
   auto& cfg = Config::Get();
   const float scale = cfg.ReadFloat("ui.scale", AutoScale(desc.OutputWindow));
-  theme::Apply(static_cast<theme::Preset>(cfg.ReadInt("ui.theme", static_cast<int>(theme::Preset::Chroma))), scale);
+  theme::Apply(static_cast<theme::Preset>(cfg.ReadInt("ui.theme", static_cast<int>(theme::kDefaultPreset))), scale);
   fonts::Load(scale, g.fonts);
 
   QueryPerformanceFrequency(&g.freq);

@@ -29,7 +29,7 @@ better than raw memory offsets:
 disassembly, address table with freezing, signature generator / tester / xref finder, module + export
 browser, bindings status, log console, and a console that runs code inside the game's own script VM.
 
-**Menu**: noir theme, command palette (Ctrl+P), per-feature hotkeys, favourites, profiles, toasts,
+**Menu**: iOS-style dark theme (Chroma RGB and classic themes selectable), command palette (Ctrl+P), per-feature hotkeys, favourites, profiles, toasts,
 gamepad navigation, panic key, clean unload. Multiplayer guard: if a multiplayer client (MafiaMP) is
 detected, Chroma refuses to modify anything.
 

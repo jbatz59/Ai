@@ -258,8 +258,9 @@ bool ToggleSwitch(const char* id, bool* v, bool enabled) {
   if (window->SkipItems) return false;
   const auto& p = th::Colors();
   const float frameH = ImGui::GetFrameHeight();
-  const float h = std::round(frameH * 0.70f);
-  const float w = std::round(h * 1.85f);
+  const bool ios = th::Current() == th::Preset::iOS;
+  const float h = std::round(frameH * (ios ? 0.82f : 0.70f));
+  const float w = std::round(h * (ios ? 1.65f : 1.85f));   // UISwitch proportions: 51 x 31
 
   if (!enabled) ImGui::BeginDisabled();
   const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -284,13 +285,23 @@ bool ToggleSwitch(const char* id, bool* v, bool enabled) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float y = pos.y + (frameH - h) * 0.5f;
     const ImVec2 a(pos.x, y), b(pos.x + w, y + h);
-    const ImVec4 off = hovered ? Mix(p.border, p.textFaint, 0.35f) : p.border;
-    const ImVec4 on = hovered ? p.accentHover : p.accent;
-    dl->AddRectFilled(a, b, Col(Mix(off, on, t)), h * 0.5f);
-    const float r = h * 0.5f - std::max(2.0f, h * 0.13f);
-    const ImVec2 c(a.x + h * 0.5f + t * (w - h), y + h * 0.5f);
-    dl->AddCircleFilled(c + ImVec2(0, 1), r, Col(WithAlpha(p.bgAlt, 0.35f)));
-    dl->AddCircleFilled(c, r, Col(Mix(p.textDim, p.bg, t)));
+    if (ios) {
+      // UISwitch: grey track, green when on, white knob with a soft shadow.
+      const ImVec4 off(0.224f, 0.224f, 0.239f, 1.0f);   // #39393D
+      dl->AddRectFilled(a, b, Col(Mix(off, p.success, t)), h * 0.5f);
+      const float r = h * 0.5f - std::max(2.0f, h * 0.07f);
+      const ImVec2 c(a.x + h * 0.5f + t * (w - h), y + h * 0.5f);
+      dl->AddCircleFilled(c + ImVec2(0, 1.5f), r + 0.5f, Col(ImVec4(0, 0, 0, 0.30f)));
+      dl->AddCircleFilled(c, r, Col(ImVec4(1, 1, 1, hovered ? 0.92f : 1.0f)));
+    } else {
+      const ImVec4 off = hovered ? Mix(p.border, p.textFaint, 0.35f) : p.border;
+      const ImVec4 on = hovered ? p.accentHover : p.accent;
+      dl->AddRectFilled(a, b, Col(Mix(off, on, t)), h * 0.5f);
+      const float r = h * 0.5f - std::max(2.0f, h * 0.13f);
+      const ImVec2 c(a.x + h * 0.5f + t * (w - h), y + h * 0.5f);
+      dl->AddCircleFilled(c + ImVec2(0, 1), r, Col(WithAlpha(p.bgAlt, 0.35f)));
+      dl->AddCircleFilled(c, r, Col(Mix(p.textDim, p.bg, t)));
+    }
   }
   if (!enabled) ImGui::EndDisabled();
   return toggled;
@@ -607,11 +618,13 @@ bool BeginCard(const char* id, ImVec2 size) {
   const float hover = ImGui::GetStateStorage()->GetFloat(hoverKey, 0.0f);
   g_cardHoverKeys.push_back(hoverKey);
 
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, p.panel);
+  const bool ios = th::Current() == th::Preset::iOS;
+  // iOS grouped cells: no outline, a slightly lighter fill on hover instead.
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, ios ? Mix(p.panel, p.panelHover, hover * 0.6f) : p.panel);
   ImGui::PushStyleColor(ImGuiCol_Border, Mix(p.border, p.accentDim, hover));
-  ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f * s);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * s, 10.0f * s));
-  ImGuiChildFlags flags = ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened;
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, (ios ? 12.0f : 8.0f) * s);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ios ? ImVec2(14.0f * s, 11.0f * s) : ImVec2(12.0f * s, 10.0f * s));
+  ImGuiChildFlags flags = ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding | (ios ? 0 : ImGuiChildFlags_Borders);
   ImGuiWindowFlags wflags = 0;
   if (size.y == 0.0f) {
     flags |= ImGuiChildFlags_AutoResizeY;
