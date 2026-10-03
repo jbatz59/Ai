@@ -107,7 +107,7 @@ DWORD g_lastThread = 0;
 DWORD g_lastCode = 0;
 uintptr_t g_lastAddress = 0;
 
-// Text report of the last first-chance report (reporter thread only). Leaked: no exit-time destructor.
+// Path of the last text report (reporter thread only). Leaked: no exit-time destructor.
 std::wstring& LastReportPath() {
   static std::wstring* p = new std::wstring();
   return *p;
@@ -776,14 +776,29 @@ void Uninstall() {
     // Someone installed a filter after us: leave theirs in place rather than reverting it.
     if (current != &UnhandledFilter) SetUnhandledExceptionFilter(current);
 
+    // Take the request slot so no handler that slipped past the g_installed check is still using the
+    // events; a handler that timed out keeps the slot forever, and then the handles must stay open.
+    bool claimed = false;
+    for (DWORD waited = 0; waited <= kUninstallWaitMs; waited += 10) {
+      bool expected = false;
+      if (g_busy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        claimed = true;
+        break;
+      }
+      Sleep(10);
+    }
+    if (!claimed) {
+      log::Warn("crash", "a crash report is still in progress; reporter left running");
+      return;
+    }
     SetEvent(g_quitEvent);
     if (WaitForSingleObject(g_thread, kUninstallWaitMs) != WAIT_OBJECT_0) {
-      // The reporter is still writing a report; its handles must stay valid while it runs.
       log::Warn("crash", "crash reporter thread did not stop in time");
       return;
     }
     g_reporterTid.store(0, std::memory_order_relaxed);
     CloseHandles();
+    g_busy.store(false, std::memory_order_release);
     if (g_dbghelp) {
       FreeLibrary(g_dbghelp);
       g_dbghelp = nullptr;
