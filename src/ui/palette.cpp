@@ -6,6 +6,7 @@
 #include <array>
 #include <cfloat>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -447,7 +448,10 @@ void UpdatePalette() {
       ImGui::PopStyleColor();
       char count[32];
       std::snprintf(count, sizeof(count), "%d results", n);
-      ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(count).x);
+      ImGui::SameLine();
+      const float countW = ImGui::CalcTextSize(count).x;
+      const float room = ImGui::GetContentRegionAvail().x;
+      if (room > countW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + room - countW);
       TextColored(p.textFaint, count);
 
       if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) close = true;

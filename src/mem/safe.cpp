@@ -19,31 +19,66 @@ using detail::kPageSize;
 using detail::kUserMax;
 using detail::kUserMin;
 
-// Per-thread cache of recently queried *accessible* regions. Only positive results are cached and
-// they expire quickly, so a stale entry can at worst let a read reach ReadProcessMemory, which still
-// fails cleanly on memory that has since been freed or protected.
-constexpr size_t kCacheSlots = 8;
+// Shared cache of recently queried *accessible* regions, direct-mapped by 64 KiB block. Only
+// positive results are cached and they expire quickly, so a stale entry can at worst let a read reach
+// ReadProcessMemory, which still fails cleanly on memory that has since been freed or protected.
+// Lock-free and allocation-free (seqlock per slot): safe to use from any thread, including inside a
+// vectored exception handler that interrupted arbitrary code.
+constexpr size_t kCacheSlotBits = 8;
 constexpr uint64_t kCacheTtlMs = 250;
 constexpr size_t kMaxStringChars = 1u << 20;   // hard cap for ReadCString/ReadWString
 constexpr uint64_t kBlockedWarnIntervalMs = 5000;
-
-struct CachedRegion {
-  uintptr_t begin;
-  uintptr_t end;
-  DWORD protect;
-  uint32_t gen;
-  uint64_t stampMs;
-};
-
-std::atomic<uint32_t> g_cacheGen{1};
-thread_local CachedRegion t_cache[kCacheSlots];
-thread_local uint32_t t_cacheNext;
 
 struct Region {
   uintptr_t begin = 0;
   uintptr_t end = 0;
   DWORD protect = 0;   // 0 when not committed
 };
+
+struct alignas(64) CacheSlot {
+  std::atomic<uint32_t> seq{0};   // odd while a writer is updating the slot
+  std::atomic<uint32_t> gen{0};
+  std::atomic<uint32_t> protect{0};
+  std::atomic<uintptr_t> begin{0};
+  std::atomic<uintptr_t> end{0};
+  std::atomic<uint64_t> stampMs{0};
+};
+
+std::atomic<uint32_t> g_cacheGen{1};
+CacheSlot g_cache[size_t{1} << kCacheSlotBits];
+
+CacheSlot& SlotFor(uintptr_t addr) {
+  return g_cache[static_cast<size_t>(((addr >> 16) * 0x9E3779B97F4A7C15ull) >> (64 - kCacheSlotBits))];
+}
+
+bool CacheLookup(uintptr_t addr, uint32_t gen, uint64_t now, Region& r) {
+  CacheSlot& s = SlotFor(addr);
+  const uint32_t before = s.seq.load(std::memory_order_acquire);
+  if (before & 1) return false;
+  const uint32_t g = s.gen.load(std::memory_order_relaxed);
+  const uint32_t p = s.protect.load(std::memory_order_relaxed);
+  const uintptr_t b = s.begin.load(std::memory_order_relaxed);
+  const uintptr_t e = s.end.load(std::memory_order_relaxed);
+  const uint64_t t = s.stampMs.load(std::memory_order_relaxed);
+  std::atomic_thread_fence(std::memory_order_acquire);
+  if (s.seq.load(std::memory_order_relaxed) != before) return false;
+  if (g != gen || addr < b || addr >= e || now - t >= kCacheTtlMs) return false;
+  r = {b, e, static_cast<DWORD>(p)};
+  return true;
+}
+
+void CacheStore(uintptr_t addr, const Region& r, uint32_t gen, uint64_t now) {
+  CacheSlot& s = SlotFor(addr);
+  uint32_t seq = s.seq.load(std::memory_order_relaxed);
+  if ((seq & 1) || !s.seq.compare_exchange_strong(seq, seq + 1, std::memory_order_relaxed)) return;   // busy: skip
+  std::atomic_thread_fence(std::memory_order_release);
+  s.gen.store(gen, std::memory_order_relaxed);
+  s.protect.store(static_cast<uint32_t>(r.protect), std::memory_order_relaxed);
+  s.begin.store(r.begin, std::memory_order_relaxed);
+  s.end.store(r.end, std::memory_order_relaxed);
+  s.stampMs.store(now, std::memory_order_relaxed);
+  s.seq.store(seq + 2, std::memory_order_release);
+}
 
 bool QueryUncached(uintptr_t addr, Region& r) {
   MEMORY_BASIC_INFORMATION mbi{};
@@ -57,15 +92,10 @@ bool QueryUncached(uintptr_t addr, Region& r) {
 bool Query(uintptr_t addr, Region& r) {
   const uint32_t gen = g_cacheGen.load(std::memory_order_relaxed);
   const uint64_t now = GetTickCount64();
-  for (const CachedRegion& e : t_cache) {
-    if (e.gen == gen && addr >= e.begin && addr < e.end && now - e.stampMs < kCacheTtlMs) {
-      r = {e.begin, e.end, e.protect};
-      return true;
-    }
-  }
+  if (CacheLookup(addr, gen, now, r)) return true;
   if (!QueryUncached(addr, r)) return false;
   if (detail::ProtReadable(r.protect) || detail::ProtWritable(r.protect) || detail::ProtExecutable(r.protect))
-    t_cache[t_cacheNext++ % kCacheSlots] = {r.begin, r.end, r.protect, gen, now};
+    CacheStore(addr, r, gen, now);
   return true;
 }
 
