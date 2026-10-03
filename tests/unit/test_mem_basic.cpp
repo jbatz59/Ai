@@ -1,6 +1,11 @@
 // Unit tests for the basic memory layer: module, safe, pattern, value, expr, disasm, siggen.
+#include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <format>
+#include <iterator>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -333,7 +338,7 @@ CG_TEST(mem_pattern_find_all_heap_and_chunk_boundary) {
   constexpr size_t kMiB = 1u << 20;
   std::vector<uint8_t> buf(3 * kMiB + 123, 0);
   const uint8_t sig[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x13, 0x37};
-  const size_t offsets[] = {0, 100, kMiB - 3, kMiB, 2 * kMiB - 1, buf.size() - sizeof(sig)};
+  const size_t offsets[] = {0, 100, kMiB - 3, kMiB + 8, 2 * kMiB - 1, buf.size() - sizeof(sig)};
   for (size_t off : offsets) std::memcpy(buf.data() + off, sig, sizeof(sig));
 
   auto p = mem::Pattern::Parse("DE AD ?? EF 1? ?7");
@@ -406,7 +411,11 @@ CG_TEST(mem_pattern_module_strings_and_xrefs) {
     REQUIRE(found.has_value());
     CHECK(mem::ReadWString(*found) == std::wstring(kWideMarker));
   }
-  CHECK(!mem::FindString(main, "cg-this-string-is-not-in-the-binary-91").has_value());
+  // Built at run time so the searched text itself is not a literal in the binary.
+  std::string absent = "Xg-this-string-is-not-in-the-binary-91";
+  volatile char first = 'c';
+  absent[0] = first;
+  CHECK(!mem::FindString(main, absent).has_value());
   CHECK(!mem::FindString(main, "").has_value());
 
   const auto xrefs = mem::FindXrefs(main, marker);

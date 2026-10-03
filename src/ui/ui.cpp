@@ -474,14 +474,28 @@ void CmdReloadBindings() {
 }
 
 void CmdReloadScripts() {
-  script::Engine::Get().ReloadAll();
-  size_t loaded = 0, failed = 0;
-  for (const auto& s : script::Engine::Get().List()) {
-    if (!s.error.empty()) ++failed;
-    else if (s.loaded) ++loaded;
-  }
-  notify::Push(failed ? notify::Kind::Warning : notify::Kind::Success, "Scripts reloaded",
-               std::to_string(loaded) + " loaded" + (failed ? ", " + std::to_string(failed) + " with errors" : std::string()));
+  tasks::PostRender([] {
+    RunGuarded("script reload", [] { script::Engine::Get().ReloadAll(); });
+    size_t loaded = 0, failed = 0;
+    for (const auto& s : script::Engine::Get().List()) {
+      if (!s.error.empty()) ++failed;
+      else if (s.loaded) ++loaded;
+    }
+    notify::Push(failed ? notify::Kind::Warning : notify::Kind::Success, "Scripts reloaded",
+                 std::to_string(loaded) + " loaded" + (failed ? ", " + std::to_string(failed) + " with errors" : std::string()));
+  });
+}
+
+void QueueFeatureSet(const std::string& id, bool on) {
+  tasks::PostRender([id, on] {
+    if (features::Feature* f = features::Registry::Get().Find(id)) RunGuarded(id.c_str(), [f, on] { f->SetEnabled(on); });
+  });
+}
+
+void QueueFeatureTrigger(const std::string& id) {
+  tasks::PostRender([id] {
+    if (features::Feature* f = features::Registry::Get().Find(id)) RunGuarded(id.c_str(), [f] { f->Trigger(); });
+  });
 }
 
 void CmdSaveConfig() {

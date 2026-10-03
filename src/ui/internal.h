@@ -84,10 +84,15 @@ Hotkey DefaultUnloadKey();   // Ctrl+Shift+End
 void RequestAppearance(int preset, float scale);
 float UiScale();   // current style.FontScaleMain
 
+// Feature interactions from the UI are applied between frames, looked up by id, so a feature (or
+// the script behind it) can never invalidate the list that is being drawn.
+void QueueFeatureSet(const std::string& id, bool on);
+void QueueFeatureTrigger(const std::string& id);
+
 // Shared commands (menu, palette, HUD).
 void CmdDisableAll();
 void CmdReloadBindings();
-void CmdReloadScripts();
+void CmdReloadScripts();   // deferred to the start of the next frame
 void CmdSaveConfig();
 void CmdOpenFolder(const std::filesystem::path& dir);
 

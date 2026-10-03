@@ -55,7 +55,13 @@ constexpr DWORD kMiniDumpWithIndirectlyReferencedMemory = 0x00000040;
 using MiniDumpWriteDumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, DWORD, const MiniDumpExceptionInfo*, const void*,
                                           const void*);
 
+enum class Job : uint8_t {
+  Report,          // write a new report for g_req
+  MarkUnhandled,   // the exception last reported first-chance went unhandled: note it in that report
+};
+
 struct Request {
+  Job job;
   EXCEPTION_RECORD record;
   CONTEXT context;
   EXCEPTION_POINTERS pointers;   // points at the copies above
@@ -96,6 +102,12 @@ size_t g_seenCount = 0;
 const EXCEPTION_RECORD* g_lastRecord = nullptr;
 DWORD g_lastThread = 0;
 uintptr_t g_lastAddress = 0;
+
+// Text report of the last first-chance report (reporter thread only). Leaked: no exit-time destructor.
+std::wstring& LastReportPath() {
+  static std::wstring* p = new std::wstring();
+  return *p;
+}
 
 std::mutex& InstallMutex() {
   static std::mutex* m = new std::mutex();
@@ -545,6 +557,7 @@ bool WriteReport() {
 
     std::filesystem::path txt = base;
     txt += L".txt";
+    LastReportPath() = txt.wstring();
     log::internal::TryWriteNow(log::Level::Error, "crash",
                                std::format("{} 0x{:08X} at {} - report: {}", ExceptionName(rec.ExceptionCode),
                                            static_cast<uint32_t>(rec.ExceptionCode),
@@ -552,6 +565,20 @@ bool WriteReport() {
     return true;
   } catch (...) {
     return false;
+  }
+}
+
+void MarkLastReportUnhandled() {
+  try {
+    const std::wstring& path = LastReportPath();
+    if (path.empty()) return;
+    const HANDLE h = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    WriteAll(h, "\r\nOutcome: nothing handled this exception; the process is terminating.\r\n");
+    CloseHandle(h);
+    log::internal::TryWriteNow(log::Level::Error, "crash", "the reported exception was not handled; the game is closing");
+  } catch (...) {
   }
 }
 
@@ -563,12 +590,25 @@ DWORD WINAPI ReporterMain(LPVOID) {
   const HANDLE waits[2] = {g_requestEvent, g_quitEvent};
   for (;;) {
     if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) return 0;
-    g_req.reported = WriteReport();
+    if (g_req.job == Job::MarkUnhandled) {
+      MarkLastReportUnhandled();
+      g_req.reported = false;
+    } else {
+      g_req.reported = WriteReport();
+    }
     SetEvent(g_doneEvent);
   }
 }
 
 // --- handlers (faulting thread) ------------------------------------------------------------------
+
+// Hands g_req to the reporter thread and waits. False on timeout: the reporter may still be reading
+// g_req, so the caller must keep the slot claimed.
+bool RunJob() {
+  ResetEvent(g_doneEvent);
+  SetEvent(g_requestEvent);
+  return WaitForSingleObject(g_doneEvent, kReportTimeoutMs) == WAIT_OBJECT_0;
+}
 
 void Report(EXCEPTION_POINTERS* ep, bool unhandled) {
   if (!g_installed.load(std::memory_order_acquire)) return;
@@ -579,11 +619,18 @@ void Report(EXCEPTION_POINTERS* ep, bool unhandled) {
 
   const EXCEPTION_RECORD* rec = ep->ExceptionRecord;
   const auto pc = static_cast<uintptr_t>(ep->ContextRecord->Rip);
+  const auto address = reinterpret_cast<uintptr_t>(rec->ExceptionAddress);
+
+  // The exception the VEH just reported first-chance reached the unhandled filter: it is a real crash.
+  if (unhandled && rec == g_lastRecord && tid == g_lastThread && address == g_lastAddress) {
+    g_req.job = Job::MarkUnhandled;
+    if (!RunJob()) return;
+    g_lastRecord = nullptr;
+    g_busy.store(false, std::memory_order_release);
+    return;
+  }
+
   bool skip = g_reportCount.load(std::memory_order_relaxed) >= kMaxReports;
-  // The same exception reaching the unhandled filter after the VEH already reported it.
-  if (unhandled && rec == g_lastRecord && tid == g_lastThread &&
-      reinterpret_cast<uintptr_t>(rec->ExceptionAddress) == g_lastAddress)
-    skip = true;
   // A first-chance fault that something up the stack keeps handling must not report every time.
   if (!unhandled)
     for (size_t i = 0; i < g_seenCount && !skip; ++i)
@@ -593,6 +640,7 @@ void Report(EXCEPTION_POINTERS* ep, bool unhandled) {
     return;
   }
 
+  g_req.job = Job::Report;
   std::memcpy(&g_req.record, rec, sizeof(EXCEPTION_RECORD));
   g_req.record.ExceptionRecord = nullptr;   // never chase the nested-record chain
   std::memcpy(&g_req.context, ep->ContextRecord, sizeof(CONTEXT));
@@ -602,19 +650,16 @@ void Report(EXCEPTION_POINTERS* ep, bool unhandled) {
   g_req.stackBase = reinterpret_cast<uintptr_t>(reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackBase);
   g_req.unhandled = unhandled;
   g_req.reported = false;
+  if (!RunJob()) return;
 
-  ResetEvent(g_doneEvent);
-  SetEvent(g_requestEvent);
-  if (WaitForSingleObject(g_doneEvent, kReportTimeoutMs) != WAIT_OBJECT_0) {
-    // The reporter may still be reading g_req: keep the slot claimed so nothing overwrites it.
-    return;
-  }
   if (g_req.reported) {
     g_reportCount.fetch_add(1, std::memory_order_relaxed);
-    g_lastRecord = rec;
-    g_lastThread = tid;
-    g_lastAddress = reinterpret_cast<uintptr_t>(rec->ExceptionAddress);
-    if (!unhandled && g_seenCount < kMaxSeenPcs) g_seenPcs[g_seenCount++] = pc;
+    if (!unhandled) {
+      g_lastRecord = rec;
+      g_lastThread = tid;
+      g_lastAddress = address;
+      if (g_seenCount < kMaxSeenPcs) g_seenPcs[g_seenCount++] = pc;
+    }
   }
   g_busy.store(false, std::memory_order_release);
 }
