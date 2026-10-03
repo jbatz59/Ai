@@ -27,7 +27,15 @@ class Window {
 };
 
 void RegisterWindow(std::unique_ptr<Window> w);
+// <windows.h> #defines FindWindow as FindWindowA/FindWindowW. The declaration is shielded from the
+// macro, and the A/W aliases keep `ui::FindWindow(id)` working in files that include <windows.h>
+// before or after this header.
+#pragma push_macro("FindWindow")
+#undef FindWindow
 Window* FindWindow(const std::string& id);
+inline Window* FindWindowA(const std::string& id) { return FindWindow(id); }
+inline Window* FindWindowW(const std::string& id) { return FindWindow(id); }
+#pragma pop_macro("FindWindow")
 const std::vector<std::unique_ptr<Window>>& Windows();
 void OpenWindow(const std::string& id);   // also focuses it
 

@@ -1,0 +1,65 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mingw:
+    name: MinGW cross build + tests (Wine)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mingw-w64 ninja-build cmake wine64 wine xvfb xauth libgl1-mesa-dri
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Unit tests (Wine)
+        env:
+          WINEDEBUG: -all
+        run: wine build/tests/cg_tests.exe
+      - name: Overlay smoke test (D3D11 under Wine + Xvfb)
+        env:
+          WINEDEBUG: -all
+        run: |
+          Xvfb :99 -screen 0 1280x720x24 &
+          sleep 2
+          cp build/Consigliere.dll build/tests/
+          DISPLAY=:99 timeout 300 wine build/tests/cg_testhost.exe --frames 240 --open-menu \
+            --screenshot overlay.bmp --screenshot-frame 120 --unload-frame 200
+          test -s build/tests/Consigliere/consigliere.log && cat build/tests/Consigliere/consigliere.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: consigliere-mingw
+          path: |
+            build/Consigliere.dll
+            build/loader/*.dll
+            build/loader/*.exe
+            build/tests/overlay.bmp
+          if-no-files-found: warn
+
+  msvc:
+    name: MSVC build + unit tests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Unit tests
+        run: build/tests/Release/cg_tests.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: consigliere-msvc
+          path: |
+            build/Release/Consigliere.dll
+            build/loader/Release/*.dll
+            build/loader/Release/*.exe
+          if-no-files-found: warn
