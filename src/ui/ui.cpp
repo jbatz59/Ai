@@ -27,6 +27,7 @@
 #include "core/util.h"
 #include "features/feature.h"
 #include "game/bindings.h"
+#include "game/script_vm.h"
 #include "render/fonts.h"
 #include "render/overlay.h"
 #include "render/theme.h"
@@ -445,6 +446,7 @@ void CmdReloadBindings() {
     bool ok = false;
     try {
       ok = game::Bindings::Get().Reload();
+      if (ok) game::vm::Install();   // a fixed Game.TickHook / Lua.* binding takes effect now
     } catch (const std::exception& e) {
       log::Error("ui", "Bindings reload threw: {}", e.what());
     } catch (...) {

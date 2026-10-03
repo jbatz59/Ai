@@ -123,3 +123,18 @@ FakeVmFrame FakeVmTick() {
   lua_pop(L, 1);
   return out;
 }
+
+bool FakeVmCleanedUp() {
+  lua_State* L = g_scriptThread;
+  if (!L) return false;
+  const int before = lua_gettop(L);
+  // After Chroma unloads, the game's print must work and nothing may point into the freed DLL.
+  if (luaL_dostring(L, "print('host: game print after unload ok') return __cg_emit == nil and __cg_print_orig == nil") != LUA_OK) {
+    std::printf("host: cleanup check failed: %s\n", lua_tostring(L, -1));
+    lua_settop(L, before);
+    return false;
+  }
+  const bool ok = lua_toboolean(L, -1) != 0;
+  lua_settop(L, before);
+  return ok;
+}

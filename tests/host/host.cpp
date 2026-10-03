@@ -186,9 +186,11 @@ int wmain(int argc, wchar_t** argv) {
   const bool stillLoaded = GetModuleHandleW(dllName.c_str()) != nullptr;
   std::printf("host: frames done; chroma_loaded=%d health=%.2f time=%.2f\n", stillLoaded ? 1 : 0, g_player.health,
               g_anchor.timeOfDay);
-  if (fakeVm)
+  if (fakeVm) {
     std::printf("host: fakevm demigod=%d first_frame=%d unbalanced_frames=%d game_pcall_errors=%d\n", demigodFrame >= 0 ? 1 : 0,
                 demigodFrame, unbalanced, gameErrors);
+    if (!stillLoaded) std::printf("host: fakevm cleaned_up=%d\n", FakeVmCleanedUp() ? 1 : 0);
+  }
   rtv->Release();
   ctx->Release();
   sc->Release();

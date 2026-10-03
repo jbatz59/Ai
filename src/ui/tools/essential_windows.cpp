@@ -63,7 +63,9 @@ class BindingsWindow final : public Window {
     if (b.Resolving()) {
       ImGui::ProgressBar(b.Progress(), ImVec2(220, 0), "Resolving...");
     } else if (ImGui::Button("Reload bindings")) {
-      tasks::RunAsync([] { game::Bindings::Get().Reload(); });
+      tasks::RunAsync([] {
+        if (game::Bindings::Get().Reload()) game::vm::Install();
+      });
     }
     ImGui::SameLine();
     DiagnosticsButton();

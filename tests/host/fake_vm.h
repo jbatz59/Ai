@@ -11,3 +11,4 @@ struct FakeVmFrame {
 std::string FakeVmBindings(bool withGlobalOffset);   // fake VM bindings (no Game.TickHook: pcall mode)
 bool FakeVmInit(bool exposeState);   // false: Lua.State resolves to null (learning mode)
 FakeVmFrame FakeVmTick();       // one "game frame": pcall a script function on a child thread
+bool FakeVmCleanedUp();         // after unload: __cg_emit and the print wrapper are gone, print works

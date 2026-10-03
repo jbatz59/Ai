@@ -159,10 +159,11 @@ DWORD WINAPI UnloadThread(LPVOID) {
   render::RemoveD3D11Hooks();
 
   tasks::ShutdownPool();
-  mem::Hooks::Get().Shutdown();
+  const bool safe = render::input::SafeToFree() && render::ThreadsInsideDetours() == 0 && game::vm::SafeToFree();
+  // MH_Uninitialize frees every trampoline; keep them if a game thread may still return through one.
+  if (game::vm::ThreadsInside() == 0) mem::Hooks::Get().Shutdown();
   Config::Get().Save();
 
-  const bool safe = render::input::SafeToFree() && render::ThreadsInsideDetours() == 0 && game::vm::ThreadsInside() == 0;
   log::Info("core", "{}", safe ? "Unloaded cleanly" : "Unloaded; staying resident because another module still references our code");
   crash::Uninstall();
   log::Shutdown();

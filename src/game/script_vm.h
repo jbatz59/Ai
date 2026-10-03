@@ -72,7 +72,8 @@ uint64_t Generation();
 // Hook lifecycle — bootstrap calls Install() after every bindings (re)load and Uninstall() on unload.
 void Install();
 void Uninstall();
-int ThreadsInside();     // > 0 => unsafe to free the DLL
+int ThreadsInside();                        // > 0 => unsafe to free the DLL
+bool SafeToFree();                          // nothing inside our detours, nothing in the VM points into the DLL
 bool OnScriptThread();
 
 }  // namespace cg::game::vm

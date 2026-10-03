@@ -50,12 +50,22 @@ constexpr std::string_view kGameNotReady = "chroma: game not ready";
 constexpr uint64_t kLearnFallbackMs = 10000;   // Lua.State's VM never pcall'd for this long -> learn
 constexpr uint64_t kLearnFallbackSkips = 200;
 constexpr uint64_t kCandidateExpireMs = 3000;  // learned VM not seen for this long -> pick again
+constexpr uint64_t kConfirmedExpireMs = 30000; // ...once the probe confirmed it (pauses, cutscenes)
+constexpr uint64_t kMainLFailGraceMs = 1000;   // keep a good Lua.State through brief bad reads
+constexpr uint64_t kIdleMs = 2000;             // pcall mode: no safe point this long -> not ready
+constexpr DWORD kCleanupWaitMs = 1500;
+constexpr std::string_view kVmRebuilt = "chroma: vm rebuilt";
 constexpr size_t kMaxErrorLen = 4096;
 constexpr DWORD kUnloadWaitMs = 2000;
 constexpr char kPrintMarker = '\x01';   // __cg_emit("\1...") => print ring instead of the collector
 
 constexpr const char* kProbeChunk =
     "if not (game ~= nil and game.game ~= nil) then error('chroma: game not ready', 0) end";
+
+// Undone before unload: the closure and the wrapper point into this DLL.
+constexpr const char* kCleanupChunk =
+    "__cg_emit = nil\n"
+    "if __cg_print_orig ~= nil then print = __cg_print_orig __cg_print_orig = nil end";
 
 // Wraps the global print once per VM generation; keeps the original and forwards to it.
 constexpr const char* kPrintWrapChunk =
@@ -130,6 +140,15 @@ std::atomic<uint64_t> g_lastPointMs{0};
 std::atomic<uintptr_t> g_candidateKey{0};   // learning mode only (no usable Lua.State)
 std::atomic<uint64_t> g_candidateSeenMs{0};
 std::atomic<bool> g_learnFallback{false};    // Lua.State resolved, but its VM never reached pcall
+std::atomic<uint64_t> g_mainPoints{0};       // safe points taken on Lua.State's VM
+std::atomic<uint64_t> g_mainFailSinceMs{0};
+std::atomic<bool> g_vmChanged{false};        // Lua.State changed: treat like a new VM generation
+
+// __cg_emit / print wrapper live in the game VM; the DLL may only be freed once they are removed.
+std::atomic<bool> g_emitLive{false};
+std::atomic<bool> g_emitLeaked{false};       // registered in a VM we can no longer reach
+std::atomic<uintptr_t> g_emitKey{0};
+std::atomic<bool> g_cleanupRequested{false};
 
 struct PCallStats {
   std::atomic<uint64_t> calls{0}, points{0}, badLayout{0}, otherVm{0}, badStack{0}, busy{0};
@@ -157,6 +176,7 @@ std::atomic<bool> g_needRegister{true};
 uintptr_t g_lastL = 0;
 uintptr_t g_lastKey = 0;   // VM identity the generation belongs to (pcall mode: global state)
 uint64_t g_readyLoggedGen = UINT64_MAX;
+bool g_sawRebuilt = false;   // a job found __cg_emit missing: the VM was rebuilt under us
 uint64_t g_sameTicks = 0;
 uint64_t g_probeGen = UINT64_MAX;   // generation the probe succeeded for
 uint64_t g_nextProbeTick = 0;
@@ -307,7 +327,10 @@ Phase ExecChunk(const Api& a, uintptr_t L, const std::string& code, const char* 
 std::string Wrap(std::string_view body) {
   std::string s;
   s.reserve(body.size() + 192);
-  s += "local __cg_f = function() ";
+  // __cg_emit vanishes when the game rebuilds its VM in place; say so instead of failing mid-chunk.
+  s += "if __cg_emit == nil then error(\"";
+  s += kVmRebuilt;
+  s += "\", 0) end local __cg_f = function() ";
   s += body;
   s += "\nend local __cg_r = {__cg_f()} for __cg_i = 1, #__cg_r do __cg_emit(tostring(__cg_r[__cg_i])) end";
   return s;
@@ -337,6 +360,10 @@ void RunJob(const Api& a, uintptr_t L, Job& job, bool wrap) {
   }
   r.ok = ph == Phase::Ok;
   if (!r.ok) {
+    if (wrap && error == kVmRebuilt) {
+      g_sawRebuilt = true;
+      error = "game script VM reloaded; try again";
+    }
     r.error = std::move(error);
     r.values.clear();
   }
@@ -353,10 +380,14 @@ void RegisterEmit(const Api& a, uintptr_t L, uint64_t gen) {
   bool haveTop = false;
   const uintptr_t top = ReadStackTop(a, L, &haveTop);
   void* l = reinterpret_cast<void*>(L);
+  // A registration in another VM that is still alive cannot be undone from here.
+  if (g_emitLive.load() && g_emitKey.load() != g_lastKey) g_emitLeaked.store(true);
   a.pushCClosure(l, &CgEmit, 0, "__cg_emit", 0, 0);
   a.setField(l, kGlobalsIndex, "__cg_emit");
   RestoreStackTop(a, L, top, haveTop);
   g_registeredOk = true;
+  g_emitKey.store(g_lastKey);
+  g_emitLive.store(true);
   std::string err;
   if (ExecChunk(a, L, kPrintWrapChunk, "=cg_print", &err, nullptr) != Phase::Ok)
     log::Debug(kChannel, "print capture not installed: {}", err);
@@ -399,8 +430,21 @@ uintptr_t CachedMainL(const Api& a) {
   if (now - g_mainLRefreshMs.load(std::memory_order_relaxed) >= kMainLRefreshMs) {
     g_mainLRefreshMs.store(now, std::memory_order_relaxed);
     const uintptr_t L = ResolveState(a, nullptr);
-    g_mainL.store(L, std::memory_order_relaxed);
-    g_mainKey.store(L ? VmKey(a, L) : 0, std::memory_order_relaxed);
+    if (!L && g_mainL.load()) {
+      // One bad read (state busy, mid-load) must not drop a good VM; clear it after 1 s of failures.
+      uint64_t since = g_mainFailSinceMs.load();
+      if (!since) g_mainFailSinceMs.compare_exchange_strong(since, now);
+      if (!since || now - since < kMainLFailGraceMs) return g_mainL.load(std::memory_order_relaxed);
+    }
+    g_mainFailSinceMs.store(0);
+    const uintptr_t key = L ? VmKey(a, L) : 0;
+    if (g_mainL.exchange(L) != L) g_vmChanged.store(true);
+    if (g_mainKey.exchange(key) != key) {
+      // Lua.State names another VM now (or none): give it a fresh chance before learning again.
+      g_mainPoints.store(0);
+      g_pcallSinceMs.store(0);
+      g_learnFallback.store(false);
+    }
   }
   return g_mainL.load(std::memory_order_relaxed);
 }
@@ -441,7 +485,8 @@ void OnScriptPoint(const Api& a, uintptr_t L, uintptr_t key) {
     return;
   }
   g_lastL = L;
-  if (key != g_lastKey) {
+  const bool vmChanged = g_pcallMode.load() && g_vmChanged.exchange(false);
+  if (key != g_lastKey || vmChanged) {
     g_lastKey = key;
     g_sameTicks = 0;
     g_nextProbeTick = 0;
@@ -456,7 +501,7 @@ void OnScriptPoint(const Api& a, uintptr_t L, uintptr_t key) {
   bool needProbe = false;
   if (g_resetInProgress.load()) {
     ready = false;
-  } else if (g_resetObserved.load()) {
+  } else if (g_resetObserved.load() && !Learning()) {
     ready = tick - g_resetDoneTick.load() >= readyTicks;
   } else {
     ready = g_sameTicks >= readyTicks && g_probeGen == gen;
@@ -478,6 +523,20 @@ void OnScriptPoint(const Api& a, uintptr_t L, uintptr_t key) {
   struct ResetDrain {
     ~ResetDrain() { t_inDrain = false; t_collector = nullptr; }
   } resetDrain;
+
+  if (g_cleanupRequested.load()) {   // unloading: remove what points into this DLL, run nothing else
+    if (g_emitLive.load() && g_registeredOk && g_registeredGen == gen && g_emitKey.load() == key) {
+      std::string err;
+      if (ExecChunk(a, L, kCleanupChunk, "=cg_cleanup", &err, nullptr) == Phase::Ok) {
+        g_registeredOk = false;
+        g_emitLive.store(false);
+      } else {
+        log::Warn(kChannel, "cleanup chunk failed: {}", err);
+      }
+    }
+    FailAllQueued("unloading");
+    return;
+  }
 
   if (needProbe) {
     std::string err;
@@ -530,6 +589,14 @@ void OnScriptPoint(const Api& a, uintptr_t L, uintptr_t key) {
       Fail(std::move(job.cb), std::string("internal error: ") + e.what());
     } catch (...) {
       Fail(std::move(job.cb), "internal error");
+    }
+    if (g_sawRebuilt) {   // the game rebuilt its VM in place: register again after it settles
+      g_sawRebuilt = false;
+      g_sameTicks = 0;
+      BumpGeneration();
+      for (auto& j : jobs) Fail(std::move(j.cb), "game script VM reloaded; try again");
+      log::Info(kChannel, "game script VM was rebuilt; re-attaching");
+      return;
     }
   }
 }
@@ -619,13 +686,19 @@ void PCallSafePoint(void* Lp) {
   const uintptr_t key = VmKey(a, L);
   g_pcs.lastKey.store(key, std::memory_order_relaxed);
   CachedMainL(a);
-  const uintptr_t mainKey = g_learnFallback.load(std::memory_order_relaxed) ? 0 : g_mainKey.load(std::memory_order_relaxed);
+  const uintptr_t realMain = g_mainKey.load(std::memory_order_relaxed);
+  // Lua.State's VM showed up after all: prefer it again unless a learned VM is already confirmed.
+  if (realMain && key == realMain && g_learnFallback.load(std::memory_order_relaxed) && !g_ready.load()) {
+    g_learnFallback.store(false);
+    g_pcallSinceMs.store(0);
+  }
+  const uintptr_t mainKey = g_learnFallback.load(std::memory_order_relaxed) ? 0 : realMain;
   if (mainKey) {
     if (key != mainKey) {   // another VM than the game's main script machine
       const uint64_t skips = g_pcs.otherVm.fetch_add(1, std::memory_order_relaxed) + 1;
       uint64_t since = g_pcallSinceMs.load(std::memory_order_relaxed);
       if (!since) g_pcallSinceMs.compare_exchange_strong(since, now);
-      else if (now - since >= kLearnFallbackMs && skips >= kLearnFallbackSkips && g_pcs.points.load() == 0 &&
+      else if (now > since && now - since >= kLearnFallbackMs && skips >= kLearnFallbackSkips && g_mainPoints.load() == 0 &&
                !g_learnFallback.exchange(true))
         log::Warn(kChannel, "pcall mode: the game never ran pcall on Lua.State's VM ({} vs {}); learning the VM from the "
                   "game's own pcalls instead", util::Hex(key), util::Hex(mainKey));
@@ -633,9 +706,9 @@ void PCallSafePoint(void* Lp) {
     }
   } else {
     uintptr_t cand = g_candidateKey.load();
-    if (cand && now - g_candidateSeenMs.load(std::memory_order_relaxed) > kCandidateExpireMs &&
-        g_candidateKey.compare_exchange_strong(cand, 0))
-      cand = 0;
+    const uint64_t seen = g_candidateSeenMs.load(std::memory_order_relaxed);
+    const uint64_t expire = g_ready.load() ? kConfirmedExpireMs : kCandidateExpireMs;
+    if (cand && now > seen && now - seen > expire && g_candidateKey.compare_exchange_strong(cand, 0)) cand = 0;
     if (!cand && g_candidateKey.compare_exchange_strong(cand, key)) cand = key;
     if (key != cand) {
       g_pcs.otherVm.fetch_add(1, std::memory_order_relaxed);
@@ -662,6 +735,7 @@ void PCallSafePoint(void* Lp) {
   } leave{&lock.cs};
   g_lastPointMs.store(now, std::memory_order_relaxed);
   g_pcs.points.fetch_add(1, std::memory_order_relaxed);
+  if (key == realMain) g_mainPoints.fetch_add(1, std::memory_order_relaxed);
   g_scriptTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
   try {
     OnScriptPoint(a, L, key);
@@ -669,10 +743,8 @@ void PCallSafePoint(void* Lp) {
     t_inDrain = false;
     t_collector = nullptr;
   }
-  try {
-    tasks::DrainGame();
-  } catch (...) {
-  }
+  // tasks::DrainGame stays on the render thread in this mode (SetGameThreadHookActive(false)):
+  // safe points can be far apart, and engine calls queued there must not wait on them.
 }
 
 int PCallDetour(void* L, int nargs, int nresults, int errfunc) {
@@ -704,6 +776,11 @@ void RemoveHook(const char* name, std::atomic<uintptr_t>& target, std::atomic<F>
   if (hooks.Exists(name)) {
     hooks.SetEnabled(name, false);
     WaitInside(kUnloadWaitMs);
+    if (g_inside.load() > 0) {   // a game thread may still return through the trampoline: keep it
+      log::Warn(kChannel, "{}: left disabled, a thread is still inside", name);
+      target.store(0);
+      return;
+    }
     hooks.Remove(name);
   }
   target.store(0);
@@ -743,10 +820,15 @@ F FnOf(const Bindings& b, std::string_view name) {
 }  // namespace
 
 // ---- public API ---------------------------------------------------------------------------------
+bool PCallIdle() {
+  return g_pcallMode.load() && GetTickCount64() - g_lastPointMs.load(std::memory_order_relaxed) > kIdleMs;
+}
+
 Status GetStatus() {
   if (!g_hookLive.load()) return Status::Unbound;
   if (!g_seenMachine.load()) return Status::WaitingForTick;
   if (!g_ready.load()) return Status::WaitingForVm;
+  if (PCallIdle()) return Status::WaitingForTick;   // the game stopped running scripts (pause, load)
   return Status::Ready;
 }
 
@@ -754,8 +836,9 @@ const char* StatusText() {
   switch (GetStatus()) {
     case Status::Unbound: return "Script VM unavailable (required bindings missing)";
     case Status::WaitingForTick:
-      return g_pcallMode.load() ? "Waiting for the game to run a script (load a save or start a mission)"
-                                : "Waiting for the game's script tick";
+      if (!g_pcallMode.load()) return "Waiting for the game's script tick";
+      return g_seenMachine.load() ? "Waiting for the game to run scripts again (paused or loading)"
+                                  : "Waiting for the game to run a script (load a save or start a mission)";
     case Status::WaitingForVm:
       if (g_resetInProgress.load()) return "Script VM is resetting";
       return g_gameNotReady.load() ? "Waiting for the game world (load a save or start a mission)"
@@ -788,6 +871,7 @@ bool HasReturnValues() { return g_hasReturns.load(); }
 void Run(std::string code, Callback cb, std::string chunkName, bool asExpression) {
   if (!Ready() || g_unloading.load()) {
     Fail(std::move(cb), g_unloading.load() ? "unloading" : StatusText());
+    if (PCallIdle()) FailAllQueued(StatusText());   // nothing will run them until the game resumes
     return;
   }
   {
@@ -856,23 +940,25 @@ void Install() {
         g_api.stateOffset.reset();   // resolve the state through the Lua.State pointer path
       }
       RemoveHook("vm.Tick", g_tickTarget, g_origTick);
-      if (const auto reset = b.Addr("Lua.ResetState"); reset && *reset) {
-        EnsureHook("vm.ResetState", *reset, &ResetDetour, g_resetTarget, g_origReset);
-      } else {
-        RemoveHook("vm.ResetState", g_resetTarget, g_origReset);
-      }
+      // Not hooked here: an unverified ResetState that never returns 3 would block readiness for
+      // good. Rebuilds are detected through Lua.State changes and a missing __cg_emit instead.
+      RemoveHook("vm.ResetState", g_resetTarget, g_origReset);
+      g_resetObserved.store(false);
+      g_resetInProgress.store(false);
       g_pcallLockActive.store(false);
       g_mainLRefreshMs.store(0);
       g_candidateKey.store(0);
       g_learnFallback.store(false);
       g_pcallSinceMs.store(0);
+      g_mainPoints.store(0);
+      g_mainFailSinceMs.store(0);
       g_nextStatsMs.store(0);
       g_statsLogs.store(0);
       g_pcallMode.store(true);
       const bool live =
           EnsureHook("vm.PCallLock", reinterpret_cast<uintptr_t>(a.pcall), &PCallDetour, g_pcallTarget, g_origPCall);
       g_hookLive.store(live);
-      tasks::SetGameThreadHookActive(live);
+      tasks::SetGameThreadHookActive(false);
       log::Info(kChannel, "script VM: Game.TickHook not needed, using pcall safe points instead ({}; returns: {}, stack restore: {}, VM identity: {})",
                 live ? "hooked" : "hook FAILED", a.returns() ? "yes" : "no", a.stackOffsets ? "yes" : "no",
                 a.globalOff >= 0 ? "global state" : "state pointer");
@@ -928,6 +1014,13 @@ void Install() {
 void Uninstall() {
   try {
     std::lock_guard installLock(g_installMutex);
+    // Remove __cg_emit and the print wrapper at one last safe point, while the hooks still run.
+    if (g_emitLive.load() && g_hookLive.load() && !OnScriptThread()) {
+      g_cleanupRequested.store(true);
+      const uint64_t until = util::NowMs() + kCleanupWaitMs;
+      while (g_emitLive.load() && util::NowMs() < until) Sleep(10);
+      if (g_emitLive.load()) log::Warn(kChannel, "could not remove __cg_emit from the game VM (no safe point); staying resident");
+    }
     g_unloading.store(true);
     g_ready.store(false);
     auto& hooks = mem::Hooks::Get();
@@ -936,8 +1029,10 @@ void Uninstall() {
     g_pcallLockActive.store(false);
     g_pcallMode.store(false);
     WaitInside(kUnloadWaitMs);
-    for (const char* name : {"vm.Tick", "vm.ResetState", "vm.PCallLock"})
-      if (hooks.Exists(name)) hooks.Remove(name);
+    if (g_inside.load() == 0) {   // otherwise keep the (disabled) trampolines: a thread still returns through one
+      for (const char* name : {"vm.Tick", "vm.ResetState", "vm.PCallLock"})
+        if (hooks.Exists(name)) hooks.Remove(name);
+    }
     g_tickTarget.store(0);
     g_resetTarget.store(0);
     g_pcallTarget.store(0);
@@ -951,6 +1046,8 @@ void Uninstall() {
 }
 
 int ThreadsInside() { return g_inside.load(); }
+
+bool SafeToFree() { return g_inside.load() == 0 && !g_emitLive.load() && !g_emitLeaked.load(); }
 
 bool OnScriptThread() {
   const DWORD tid = g_scriptTid.load(std::memory_order_relaxed);
