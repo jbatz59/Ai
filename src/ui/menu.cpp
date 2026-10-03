@@ -836,7 +836,7 @@ void DrawSettingsPage() {
     int preset = static_cast<int>(th::Current());
     ImGui::SetNextItemWidth(220.0f * s);
     if (ImGui::BeginCombo("##theme", th::PresetName(th::Current()))) {
-      for (int i = 0; i < 4; ++i) {
+      for (int i = 0; i < th::kPresetCount; ++i) {
         const auto pr = static_cast<th::Preset>(i);
         if (ImGui::Selectable(th::PresetName(pr), i == preset)) RequestAppearance(i, UiScale());
         if (i == preset) ImGui::SetItemDefaultFocus();
@@ -862,6 +862,17 @@ void DrawSettingsPage() {
     if (!ImGui::IsItemActive() && !ImGui::IsItemDeactivatedAfterEdit()) g_menu.scaleEdit = -1.0f;
     ImGui::SameLine();
     if (ImGui::Button("1.00x")) RequestAppearance(preset, 1.0f);
+    if (th::ChromaActive()) {
+      auto& cfg = Config::Get();
+      SettingsLabel("Chroma speed", "How fast the RGB accent cycles (colour wheels per second). 0 freezes the current colour.");
+      float speed = cfg.ReadFloat("ui.chroma.speed", 0.12f);
+      ImGui::SetNextItemWidth(220.0f * s);
+      if (ImGui::SliderFloat("##chromaspeed", &speed, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) cfg.WriteDouble("ui.chroma.speed", speed);
+      SettingsLabel("Chroma saturation", "0 = monochrome white accents, 1 = full neon.");
+      float sat = cfg.ReadFloat("ui.chroma.saturation", 0.85f);
+      ImGui::SetNextItemWidth(220.0f * s);
+      if (ImGui::SliderFloat("##chromasat", &sat, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) cfg.WriteDouble("ui.chroma.saturation", sat);
+    }
     ImGui::EndTable();
   }
 
@@ -1114,10 +1125,14 @@ void DrawHeader(float height) {
   dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + height), Col(p.bgAlt), style.WindowRounding, ImDrawFlags_RoundCornersTop);
   const float mid = wp.x + ws.x * 0.5f;
   const float ry = wp.y + height - 1.0f;
-  dl->AddRectFilledMultiColor(ImVec2(wp.x, ry), ImVec2(mid, ry + 1.0f), Col(p.accent, 0.0f), Col(p.accent, 0.85f), Col(p.accent, 0.85f),
-                              Col(p.accent, 0.0f));
-  dl->AddRectFilledMultiColor(ImVec2(mid, ry), ImVec2(wp.x + ws.x, ry + 1.0f), Col(p.accent, 0.85f), Col(p.accent, 0.0f), Col(p.accent, 0.0f),
-                              Col(p.accent, 0.85f));
+  if (th::ChromaActive()) {
+    th::DrawChromaBar(dl, ImVec2(wp.x, ry - 1.0f * s), ImVec2(wp.x + ws.x, ry + 1.0f), 0.95f);
+  } else {
+    dl->AddRectFilledMultiColor(ImVec2(wp.x, ry), ImVec2(mid, ry + 1.0f), Col(p.accent, 0.0f), Col(p.accent, 0.85f), Col(p.accent, 0.85f),
+                                Col(p.accent, 0.0f));
+    dl->AddRectFilledMultiColor(ImVec2(mid, ry), ImVec2(wp.x + ws.x, ry + 1.0f), Col(p.accent, 0.85f), Col(p.accent, 0.0f), Col(p.accent, 0.0f),
+                                Col(p.accent, 0.85f));
+  }
 
   // Wordmark.
   float x = wp.x + 22.0f * s;
@@ -1126,7 +1141,19 @@ void DrawHeader(float height) {
   const float titleSize = ImGui::GetFontSize();
   PopFont();
   const float titleY = wp.y + (height - titleSize) * 0.5f;
-  x += DrawTracked(dl, titleFont, titleSize, ImVec2(x, titleY), "CONSIGLIERE", 0.16f, Col(p.accent));
+  if (th::ChromaActive()) {
+    // Per-letter rainbow wordmark that flows with the chroma cycle.
+    const char* word = "CONSIGLIERE";
+    float cx = x;
+    for (int i = 0; word[i]; ++i) {
+      const char glyph[2] = {word[i], '\0'};
+      dl->AddText(titleFont, titleSize, ImVec2(cx, titleY), th::Chroma(static_cast<float>(i) * 0.045f), glyph);
+      cx += titleFont->CalcTextSizeA(titleSize, FLT_MAX, 0.0f, glyph).x + titleSize * 0.16f;
+    }
+    x = cx - titleSize * 0.16f;
+  } else {
+    x += DrawTracked(dl, titleFont, titleSize, ImVec2(x, titleY), "CONSIGLIERE", 0.16f, Col(p.accent));
+  }
   x += 10.0f * s;
   {
     PushBodySize(0.82f);
@@ -1387,6 +1414,12 @@ void DrawMainMenu() {
     const ImVec2 ws = ImGui::GetWindowSize();
     const float headerH = std::round(ImGui::GetFrameHeight() * 1.95f + 8.0f * s);
     DrawHeader(headerH);
+    if (th::ChromaActive()) {
+      ImDrawList* fg = ImGui::GetWindowDrawList();
+      fg->PushClipRect(wp - ImVec2(8, 8), wp + ws + ImVec2(8, 8), false);
+      th::DrawChromaBorder(fg, wp + ImVec2(1, 1), wp + ws - ImVec2(1, 1), ImGui::GetStyle().WindowRounding, 2.0f * s);
+      fg->PopClipRect();
+    }
     const float bannerH = DrawMpBanner(wp.y + headerH);
     const float top = wp.y + headerH + bannerH;
     const float bottom = wp.y + ws.y;

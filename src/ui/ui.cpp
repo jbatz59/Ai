@@ -124,7 +124,7 @@ void ReloadFromConfig() {
   for (const auto& w : g_windows) LoadWindowState(*w);
   detail::InvalidateSettings();
   const auto& cfg = Config::Get();
-  const int preset = static_cast<int>(cfg.ReadInt(detail::kCfgTheme, 0));
+  const int preset = static_cast<int>(cfg.ReadInt(detail::kCfgTheme, static_cast<int>(render::theme::Preset::Chroma)));
   const float scale = cfg.ReadFloat(detail::kCfgScale, detail::UiScale());
   render::theme::Apply(static_cast<render::theme::Preset>(preset), scale);
   log::SetMinLevel(static_cast<log::Level>(

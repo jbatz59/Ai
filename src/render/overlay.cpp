@@ -220,7 +220,7 @@ bool InitFor(IDXGISwapChain* sc) {
 
   auto& cfg = Config::Get();
   const float scale = cfg.ReadFloat("ui.scale", AutoScale(desc.OutputWindow));
-  theme::Apply(static_cast<theme::Preset>(cfg.ReadInt("ui.theme", 0)), scale);
+  theme::Apply(static_cast<theme::Preset>(cfg.ReadInt("ui.theme", static_cast<int>(theme::Preset::Chroma))), scale);
   fonts::Load(scale, g.fonts);
 
   QueryPerformanceFrequency(&g.freq);
@@ -504,6 +504,7 @@ void Frame(IDXGISwapChain* sc) {
     g_captureQueue.clear();
   }
 
+  theme::Tick(dt);
   ImGui_ImplDX11_NewFrame();
   input::PumpToImGui();
   ImGui_ImplWin32_NewFrame();

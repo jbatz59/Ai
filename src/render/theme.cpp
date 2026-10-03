@@ -1,9 +1,13 @@
 #include "render/theme.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include <imgui.h>
+
+#include "core/config.h"
 
 namespace cg::render::theme {
 namespace {
@@ -108,11 +112,34 @@ PresetDef MakeLight() {
   return {p, false};
 }
 
+// Modern dark glass with an accent that the Chroma tick re-tints every frame.
+PresetDef MakeChroma() {
+  Palette p{};
+  p.bg = Rgb(0x0D0D12, 0.94f);
+  p.bgAlt = Rgb(0x08080C, 0.96f);
+  p.panel = Rgb(0x15151D);
+  p.panelHover = Rgb(0x1E1E2A);
+  p.border = Rgb(0x2A2A38);
+  p.text = Rgb(0xEEEEF5);
+  p.textDim = Rgb(0x9C9CB2);
+  p.textFaint = Rgb(0x5F5F75);
+  p.accent = Rgb(0xB45CFF);
+  p.accentHover = Rgb(0xC983FF);
+  p.accentActive = Rgb(0x9B3FEA);
+  p.accentDim = Rgb(0x3D2259);
+  p.danger = Rgb(0xFF4D6A);
+  p.warning = Rgb(0xFFB547);
+  p.success = Rgb(0x3DDC97);
+  p.info = Rgb(0x4DA3FF);
+  return {p, true};
+}
+
 PresetDef Make(Preset p) {
   switch (p) {
     case Preset::Midnight: return MakeMidnight();
     case Preset::Bordeaux: return MakeBordeaux();
     case Preset::Light: return MakeLight();
+    case Preset::Chroma: return MakeChroma();
     case Preset::Noir:
     default: return MakeNoir();
   }
@@ -123,13 +150,24 @@ Preset Sanitize(Preset p) {
     case Preset::Noir:
     case Preset::Midnight:
     case Preset::Bordeaux:
-    case Preset::Light: return p;
+    case Preset::Light:
+    case Preset::Chroma: return p;
   }
-  return Preset::Noir;
+  return Preset::Chroma;
 }
 
-Palette g_palette = MakeNoir().pal;
-Preset g_current = Preset::Noir;
+Palette g_palette = MakeChroma().pal;
+Preset g_current = Preset::Chroma;
+float g_hue = 0.75f;
+float g_saturation = 0.85f;
+float g_speed = 0.12f;
+int g_configRefresh = 0;
+
+ImVec4 Hsv(float h, float s, float v, float a = 1.0f) {
+  float r, g, b;
+  ImGui::ColorConvertHSVtoRGB(h - std::floor(h), std::clamp(s, 0.0f, 1.0f), std::clamp(v, 0.0f, 1.0f), r, g, b);
+  return ImVec4(r, g, b, a);
+}
 
 // Bump when Dear ImGui adds style colors: SetColors() must assign every entry.
 static_assert(ImGuiCol_COUNT == 61, "Dear ImGui color list changed - update theme.cpp SetColors()");
@@ -256,6 +294,19 @@ void Apply(Preset preset, float uiScale) {
   style.DisabledAlpha = 0.45f;
   style.DisplaySafeAreaPadding = ImVec2(4, 4);
 
+  if (preset == Preset::Chroma) {
+    style.WindowRounding = 14;
+    style.ChildRounding = 10;
+    style.FrameRounding = 8;
+    style.PopupRounding = 10;
+    style.GrabRounding = 8;
+    style.TabRounding = 8;
+    style.FramePadding = ImVec2(12, 7);
+    style.ItemSpacing = ImVec2(10, 9);
+    style.WindowBorderSize = 0;   // the animated chroma border replaces it
+    style.PopupBorderSize = 1;
+  }
+
   SetColors(style.Colors, def.pal, def.dark);
 
   style.ScaleAllSizes(scale);
@@ -272,12 +323,82 @@ const char* PresetName(Preset p) {
     case Preset::Midnight: return "Midnight";
     case Preset::Bordeaux: return "Bordeaux";
     case Preset::Light: return "Light";
+    case Preset::Chroma: return "Chroma";
   }
-  return "Noir";
+  return "Chroma";
 }
 
 ImU32 U32(const ImVec4& c, float alphaMul) {
   return ImGui::ColorConvertFloat4ToU32(ImVec4(c.x, c.y, c.z, std::clamp(c.w * alphaMul, 0.0f, 1.0f)));
+}
+
+}  // namespace cg::render::theme
+
+namespace cg::render::theme {
+
+void Tick(float dt) {
+  if (g_current != Preset::Chroma || ImGui::GetCurrentContext() == nullptr) return;
+  if (--g_configRefresh <= 0) {
+    g_configRefresh = 30;
+    g_speed = std::clamp(Config::Get().ReadFloat("ui.chroma.speed", 0.12f), 0.0f, 2.0f);
+    g_saturation = std::clamp(Config::Get().ReadFloat("ui.chroma.saturation", 0.85f), 0.0f, 1.0f);
+  }
+  g_hue = std::fmod(g_hue + g_speed * std::max(dt, 0.0f), 1.0f);
+  g_palette.accent = Hsv(g_hue, g_saturation, 1.0f);
+  g_palette.accentHover = Hsv(g_hue, g_saturation * 0.75f, 1.0f);
+  g_palette.accentActive = Hsv(g_hue, g_saturation, 0.82f);
+  g_palette.accentDim = Hsv(g_hue, g_saturation * 0.9f, 0.36f);
+  SetColors(ImGui::GetStyle().Colors, g_palette, true);
+}
+
+bool ChromaActive() { return g_current == Preset::Chroma; }
+
+ImU32 Chroma(float offset, float alpha) {
+  const float s = g_current == Preset::Chroma ? g_saturation : 0.0f;
+  return ImGui::ColorConvertFloat4ToU32(Hsv(g_hue + offset, s > 0 ? s : 0.85f, 1.0f, std::clamp(alpha, 0.0f, 1.0f)));
+}
+
+void DrawChromaBorder(ImDrawList* dl, ImVec2 min, ImVec2 max, float rounding, float thickness) {
+  if (!dl) return;
+  dl->PathRect(min, max, rounding);
+  std::vector<ImVec2> pts(dl->_Path.Data, dl->_Path.Data + dl->_Path.Size);
+  dl->PathClear();
+  if (pts.size() < 2) return;
+  pts.push_back(pts.front());
+  // Subdivide so straight edges also carry the gradient.
+  std::vector<ImVec2> fine;
+  fine.reserve(pts.size() * 4);
+  const float step = 10.0f;
+  for (size_t i = 0; i + 1 < pts.size(); ++i) {
+    const ImVec2 a = pts[i], b = pts[i + 1];
+    const float len = std::sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+    const int n = std::max(1, static_cast<int>(len / step));
+    for (int k = 0; k < n; ++k) {
+      const float t = static_cast<float>(k) / static_cast<float>(n);
+      fine.emplace_back(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+    }
+  }
+  fine.push_back(pts.back());
+  const float total = static_cast<float>(fine.size());
+  for (size_t i = 0; i + 1 < fine.size(); ++i) {
+    const float off = static_cast<float>(i) / total;
+    dl->AddLine(fine[i], fine[i + 1], Chroma(off, 0.16f), thickness * 4.0f);   // glow
+  }
+  for (size_t i = 0; i + 1 < fine.size(); ++i) {
+    const float off = static_cast<float>(i) / total;
+    dl->AddLine(fine[i], fine[i + 1], Chroma(off, 1.0f), thickness);
+  }
+}
+
+void DrawChromaBar(ImDrawList* dl, ImVec2 min, ImVec2 max, float alpha) {
+  if (!dl || max.x <= min.x) return;
+  constexpr int kSegments = 32;
+  const float w = (max.x - min.x) / kSegments;
+  for (int i = 0; i < kSegments; ++i) {
+    const float a = static_cast<float>(i) / kSegments, b = static_cast<float>(i + 1) / kSegments;
+    const ImU32 ca = Chroma(a * 0.5f, alpha), cb = Chroma(b * 0.5f, alpha);
+    dl->AddRectFilledMultiColor(ImVec2(min.x + w * i, min.y), ImVec2(min.x + w * (i + 1), max.y), ca, cb, cb, ca);
+  }
 }
 
 }  // namespace cg::render::theme
