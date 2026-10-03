@@ -619,7 +619,10 @@ std::vector<uintptr_t> FindInstances(uintptr_t vtable, size_t maxResults, const 
         const uintptr_t hit = at + i;
         if (hit >= bufLo && hit < bufHi) continue;   // our own copy buffer
         results.push_back(hit);
-        if (results.size() >= maxResults) return true;
+        if (results.size() >= maxResults) {
+          if (progress) progress->store(1.0f);
+          return true;
+        }
       }
       return false;
     };
