@@ -25,7 +25,7 @@
       "kind": "pointer",
       "steps": [ { "pattern": "48 89 05 ? ? ? ? 48 8B 10 FF 92 ? ? ? ?" }, { "rip": [3, 7] }, { "deref": true }, { "add": "0xD0" }, { "deref": true } ],
       "verified": false,
-      "notes": "Global C_ScriptGameMachine* then lua_State at +0xD0. MartinJK/Mafia-Definitive-Edition-ScriptHook M1DE component (MIT, 2020 launch build; its pattern path was disabled in source). Only used if Lua.StateOffset cannot be applied."
+      "notes": "Global C_ScriptGameMachine* then lua_State at +0xD0. MartinJK/Mafia-Definitive-Edition-ScriptHook M1DE component (MIT, 2020 launch build; its pattern path was disabled in source, it used the hard-coded global RVA 0x6312DA0). Resolves to RVA 0x6315F10 on build 0x6092B6F8. Without Game.TickHook this identifies the main VM for pcall mode; if it is null or wrong, Chroma learns the VM from the game's own pcalls."
     },
     "Lua.PCall": {
       "kind": "function",
@@ -70,6 +70,7 @@
     "Lua.ApiTopOffset": { "kind": "constant", "value": "0x48", "verified": false, "notes": "ApiStack.top in lua_State; MartinJK gettop = (*(L+72) - *(L+80)) >> 4 (MIT)." },
     "Lua.ApiBaseOffset": { "kind": "constant", "value": "0x50", "verified": false, "notes": "ApiStack.base in lua_State (MIT sources above)." },
     "Lua.ObjectSize": { "kind": "constant", "value": "16", "verified": false, "notes": "HksObject size." },
+    "Lua.GlobalOffset": { "kind": "constant", "value": "0x10", "verified": false, "notes": "HksGlobal* in lua_State, right after the 16-byte chunk header (the CallStack then ends at 0x48 where ApiStack.top starts, matching the MIT offsets above). pcall mode uses it to accept every thread of the main VM." },
     "Lua.PCallLock": { "kind": "constant", "value": "1", "verified": false, "notes": "Serialise worker-thread pcalls with our chunks (Kamzik123 approach, MIT)." }
   },
   "cheats": []

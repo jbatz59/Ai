@@ -132,9 +132,18 @@ class BindingsWindow final : public Window {
         ImGui::SetClipboardText(value.c_str());
       }
       ImGui::TableNextColumn();
-      ImGui::TextColored(StatusColor(s.status), "%s", game::SymbolStatusName(s.status));
-      ImGui::TableNextColumn();
-      ImGui::TextWrapped("%s", s.error.empty() ? s.notes.c_str() : s.error.c_str());
+      // Without a tick hook the VM runs at pcall safe points, so this failure is expected, not an error.
+      const bool notNeeded =
+          s.status == game::SymbolStatus::Failed && s.name == "Game.TickHook" && game::vm::PCallMode();
+      if (notNeeded) {
+        ImGui::TextColored(c.textFaint, "not needed");
+        ImGui::TableNextColumn();
+        ImGui::TextWrapped("No match on this build; Chroma uses pcall safe points instead.");
+      } else {
+        ImGui::TextColored(StatusColor(s.status), "%s", game::SymbolStatusName(s.status));
+        ImGui::TableNextColumn();
+        ImGui::TextWrapped("%s", s.error.empty() ? s.notes.c_str() : s.error.c_str());
+      }
       ImGui::PopID();
     }
     ImGui::EndTable();

@@ -8,6 +8,6 @@ struct FakeVmFrame {
   bool demigod = false;        // set by game.game:GetActivePlayer():SetDemigod(true)
 };
 
-std::string FakeVmBindings();   // bindings file for the fake VM (no Game.TickHook: pcall mode)
-bool FakeVmInit();
-FakeVmFrame FakeVmTick();       // one "game frame": pcall a script function on the main state
+std::string FakeVmBindings(bool withGlobalOffset);   // fake VM bindings (no Game.TickHook: pcall mode)
+bool FakeVmInit(bool exposeState);   // false: Lua.State resolves to null (learning mode)
+FakeVmFrame FakeVmTick();       // one "game frame": pcall a script function on a child thread

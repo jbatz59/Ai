@@ -1,6 +1,7 @@
 // A fake Havok Script VM for the test host: real Lua 5.4 behind HKS-shaped entry points, exported
 // from the exe so a bindings file can find them with "export" steps. It deliberately has NO tick
-// hook, so Chroma has to use pcall safe points, exactly like Mafia: DE build 0x6092B6F8.
+// hook, so Chroma has to use pcall safe points, exactly like Mafia: DE build 0x6092B6F8. Like the
+// game, it never calls pcall on the main state: script work runs on a child thread of the VM.
 #include "fake_vm.h"
 
 #include <cstddef>
@@ -22,6 +23,7 @@ struct FakeMachine {
   lua_State* L;   // +0xD0, like C_ScriptMachine
 };
 FakeMachine g_machine{};
+lua_State* g_scriptThread = nullptr;   // child thread the "game" runs its scripts on
 
 const char* kGameApi = R"lua(
 unpack = unpack or table.unpack
@@ -67,7 +69,7 @@ __declspec(dllexport) __attribute__((noinline)) const char* FakeToLString(lua_St
 // Called through a volatile pointer so the call really goes through the (hooked) export.
 static int (*volatile g_pcall)(lua_State*, int, int, int) = FakePCall;
 
-std::string FakeVmBindings() {
+std::string FakeVmBindings(bool withGlobalOffset) {
   char buf[4096];
   std::snprintf(buf, sizeof(buf), R"json({
   "schema": 1,
@@ -82,14 +84,16 @@ std::string FakeVmBindings() {
     "Lua.ToLString":     { "kind": "function", "steps": [ { "export": "cg_testhost.exe!FakeToLString" } ], "verified": true },
     "Lua.ApiTopOffset":  { "kind": "constant", "value": "%zu", "verified": true },
     "Lua.ApiBaseOffset": { "kind": "constant", "value": "%zu", "verified": true },
-    "Lua.ObjectSize":    { "kind": "constant", "value": "%zu", "verified": true }
+    "Lua.ObjectSize":    { "kind": "constant", "value": "%zu", "verified": true },
+    "Lua.%s":  { "kind": "constant", "value": "%zu", "verified": true }
   }
 })json",
-                offsetof(lua_State, top), offsetof(lua_State, stack), sizeof(StackValue));
+                offsetof(lua_State, top), offsetof(lua_State, stack), sizeof(StackValue),
+                withGlobalOffset ? "GlobalOffset" : "UnusedOffset", offsetof(lua_State, l_G));
   return buf;
 }
 
-bool FakeVmInit() {
+bool FakeVmInit(bool exposeState) {
   lua_State* L = luaL_newstate();
   if (!L) return false;
   luaL_openlibs(L);
@@ -97,14 +101,17 @@ bool FakeVmInit() {
     std::printf("host: fake VM init failed: %s\n", lua_tostring(L, -1));
     return false;
   }
-  g_machine.L = L;
+  g_scriptThread = lua_newthread(L);
+  luaL_ref(L, LUA_REGISTRYINDEX);   // keep the thread alive
+  // exposeState=false: the machine exists but its state slot is empty (a broken Lua.State binding).
+  g_machine.L = exposeState ? L : nullptr;
   cg_fake_machine = &g_machine;
   return true;
 }
 
 FakeVmFrame FakeVmTick() {
   FakeVmFrame out;
-  lua_State* L = g_machine.L;
+  lua_State* L = g_scriptThread;
   if (!L) return out;
   const int before = lua_gettop(L);
   lua_getglobal(L, "__host_frame");

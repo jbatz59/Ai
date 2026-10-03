@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -42,7 +43,13 @@ constexpr uint64_t kReadyTicks = 60;
 constexpr uint64_t kReadyPointsPCall = 12;
 constexpr uint64_t kPointIntervalMs = 15;
 constexpr uint64_t kMainLRefreshMs = 100;
-constexpr uint64_t kMismatchLogAfter = 600;
+constexpr uint64_t kStatsFirstLogMs = 5000;    // pcall-mode telemetry while the VM is not ready
+constexpr uint64_t kStatsMaxLogMs = 120000;
+constexpr int kStatsMaxLogs = 12;
+constexpr std::string_view kGameNotReady = "chroma: game not ready";
+constexpr uint64_t kLearnFallbackMs = 10000;   // Lua.State's VM never pcall'd for this long -> learn
+constexpr uint64_t kLearnFallbackSkips = 200;
+constexpr uint64_t kCandidateExpireMs = 3000;  // learned VM not seen for this long -> pick again
 constexpr size_t kMaxErrorLen = 4096;
 constexpr DWORD kUnloadWaitMs = 2000;
 constexpr char kPrintMarker = '\x01';   // __cg_emit("\1...") => print ring instead of the collector
@@ -72,6 +79,7 @@ struct Api {
   std::optional<int64_t> stateOffset;   // inside the machine; else Lua.State pointer binding
   bool stackOffsets = false;
   int64_t topOff = 0, baseOff = 0, objSize = 0;
+  int64_t globalOff = -1;               // lua_State -> its VM's global state (HKS: 0x10); -1 = unknown
   bool returns() const { return pushCClosure && setField && checkLString; }
 };
 
@@ -109,10 +117,31 @@ std::atomic<DWORD> g_scriptTid{0};
 // script thread right before the game calls pcall on the MAIN lua_State (an API boundary, the same
 // place a C function may call back into Lua). The state pointer from the Lua.State binding is only
 // trusted when the game itself passes exactly that pointer to pcall.
+//
+// The game rarely calls pcall on the main state itself: it runs scripts on child threads of the
+// same VM. Any lua_State the game passes to pcall is valid at that moment, so every state that
+// shares the main state's global state (Lua.GlobalOffset) is accepted. If Lua.State is unusable,
+// Chroma attaches to whichever VM the game calls pcall on and lets the probe (game.game) confirm it.
 std::atomic<bool> g_pcallMode{false};
 std::atomic<uintptr_t> g_mainL{0};
+std::atomic<uintptr_t> g_mainKey{0};
 std::atomic<uint64_t> g_mainLRefreshMs{0};
 std::atomic<uint64_t> g_lastPointMs{0};
+std::atomic<uintptr_t> g_candidateKey{0};   // learning mode only (no usable Lua.State)
+std::atomic<uint64_t> g_candidateSeenMs{0};
+std::atomic<bool> g_learnFallback{false};    // Lua.State resolved, but its VM never reached pcall
+
+struct PCallStats {
+  std::atomic<uint64_t> calls{0}, points{0}, badLayout{0}, otherVm{0}, badStack{0}, busy{0};
+  std::atomic<uintptr_t> lastL{0}, lastKey{0};
+};
+PCallStats g_pcs;
+std::atomic<uint64_t> g_pcallSinceMs{0};
+std::atomic<uint64_t> g_nextStatsMs{0};
+std::atomic<int> g_statsLogs{0};
+std::mutex g_probeMutex;
+std::string g_lastProbeError;   // guarded by g_probeMutex
+std::atomic<bool> g_gameNotReady{false};
 
 // ---- VM readiness -----------------------------------------------------------------------------
 std::atomic<bool> g_seenMachine{false};
@@ -124,8 +153,10 @@ std::atomic<bool> g_resetInProgress{false};
 std::atomic<uint64_t> g_resetDoneTick{0};
 std::atomic<bool> g_needRegister{true};
 
-// Script-thread only.
+// Script-thread only (pcall mode: under PCallLock()).
 uintptr_t g_lastL = 0;
+uintptr_t g_lastKey = 0;   // VM identity the generation belongs to (pcall mode: global state)
+uint64_t g_readyLoggedGen = UINT64_MAX;
 uint64_t g_sameTicks = 0;
 uint64_t g_probeGen = UINT64_MAX;   // generation the probe succeeded for
 uint64_t g_nextProbeTick = 0;
@@ -355,14 +386,37 @@ uintptr_t ResolveState(const Api& a, void* machine) {
   return LooksLikeState(a, L) ? L : 0;
 }
 
+// Which VM a state belongs to: its global state pointer, or the state itself when unknown.
+uintptr_t VmKey(const Api& a, uintptr_t L) {
+  if (a.globalOff < 0 || !L) return L;
+  const auto g = mem::Read<uintptr_t>(L + static_cast<uintptr_t>(a.globalOff));
+  return g && mem::IsPlausiblePtr(*g) ? *g : L;
+}
+
 // Main lua_State for pcall mode, re-resolved at most every 100 ms (pcall is a hot path).
 uintptr_t CachedMainL(const Api& a) {
   const uint64_t now = GetTickCount64();
   if (now - g_mainLRefreshMs.load(std::memory_order_relaxed) >= kMainLRefreshMs) {
     g_mainLRefreshMs.store(now, std::memory_order_relaxed);
-    g_mainL.store(ResolveState(a, nullptr), std::memory_order_relaxed);
+    const uintptr_t L = ResolveState(a, nullptr);
+    g_mainL.store(L, std::memory_order_relaxed);
+    g_mainKey.store(L ? VmKey(a, L) : 0, std::memory_order_relaxed);
   }
   return g_mainL.load(std::memory_order_relaxed);
+}
+
+// Learning mode: no usable Lua.State (or it never showed up), the probe picks the VM.
+bool Learning() { return g_pcallMode.load() && (!g_mainKey.load() || g_learnFallback.load()); }
+
+void SetProbeError(std::string err) {
+  g_gameNotReady.store(err == kGameNotReady);
+  std::lock_guard lk(g_probeMutex);
+  g_lastProbeError = std::move(err);
+}
+
+std::string LastProbeError() {
+  std::lock_guard lk(g_probeMutex);
+  return g_lastProbeError;
 }
 
 void BumpGeneration() {
@@ -370,15 +424,15 @@ void BumpGeneration() {
   g_ready.store(false);
 }
 
-void OnScriptPoint(const Api& a, uintptr_t L) {
+void OnScriptPoint(const Api& a, uintptr_t L, uintptr_t key) {
   const uint64_t tick = g_tickCount.fetch_add(1) + 1;
   g_seenMachine.store(true);
   if (!a.loadBuffer || !a.pcall) return;
   const uint64_t readyTicks = g_pcallMode.load() ? kReadyPointsPCall : kReadyTicks;
 
   if (!L) {
-    if (g_lastL) {
-      g_lastL = 0;
+    if (g_lastKey) {
+      g_lastL = g_lastKey = 0;
       BumpGeneration();
     }
     g_ready.store(false);
@@ -386,8 +440,9 @@ void OnScriptPoint(const Api& a, uintptr_t L) {
     FailAllQueued(StatusText());
     return;
   }
-  if (L != g_lastL) {
-    g_lastL = L;
+  g_lastL = L;
+  if (key != g_lastKey) {
+    g_lastKey = key;
     g_sameTicks = 0;
     g_nextProbeTick = 0;
     g_probeBackoff = 30;
@@ -429,9 +484,13 @@ void OnScriptPoint(const Api& a, uintptr_t L) {
     if (ExecChunk(a, L, kProbeChunk, "=cg_probe", &err, nullptr) == Phase::Ok) {
       g_probeGen = gen;
       ready = true;
+      SetProbeError({});
     } else {
       g_nextProbeTick = tick + g_probeBackoff;
       if (!a.stackOffsets && g_probeBackoff < 600) g_probeBackoff *= 2;   // each failure leaks a slot
+      // Learning mode: a VM without game.game may be the wrong one; let another VM be tried.
+      if (Learning()) g_candidateKey.store(0);
+      SetProbeError(std::move(err));
       g_ready.store(false);
       return;
     }
@@ -439,6 +498,16 @@ void OnScriptPoint(const Api& a, uintptr_t L) {
   if (gen != g_generation.load()) return;   // reset raced with us
   g_ready.store(ready);
   if (!ready) return;
+  if (g_readyLoggedGen != gen) {
+    g_readyLoggedGen = gen;
+    if (g_pcallMode.load()) {
+      const uintptr_t mainKey = g_mainKey.load();
+      log::Info(kChannel, "Script VM ready (pcall safe points; L={} vm={} {})", util::Hex(L), util::Hex(key),
+                mainKey == key ? "same VM as Lua.State" : (mainKey ? "learned, Lua.State is a different VM" : "learned, Lua.State unusable"));
+    } else {
+      log::Info(kChannel, "Script VM ready (tick hook; L={})", util::Hex(L));
+    }
+  }
 
   RegisterEmit(a, L, gen);
   const bool wrap = g_registeredOk;
@@ -467,7 +536,8 @@ void OnScriptPoint(const Api& a, uintptr_t L) {
 
 void OnTick(void* machine) {
   const Api a = ApiSnapshot();
-  OnScriptPoint(a, ResolveState(a, machine));
+  const uintptr_t L = ResolveState(a, machine);
+  OnScriptPoint(a, L, L);
 }
 
 int64_t TickDetour(void* machine) {
@@ -511,26 +581,90 @@ int64_t ResetDetour(void* machine, char async, uint64_t timeout) {
   return ret;
 }
 
-void PCallSafePoint(void* L) {
-  const Api a = ApiSnapshot();
-  const uintptr_t mainL = CachedMainL(a);
-  if (!mainL || reinterpret_cast<uintptr_t>(L) != mainL) {   // only the main state, as passed by the game
-    static std::atomic<uint64_t> misses{0};
-    if (misses.fetch_add(1, std::memory_order_relaxed) + 1 == kMismatchLogAfter)
-      log::Warn(kChannel, "pcall mode: game calls pcall on L={} but Lua.State resolves to {}; waiting",
-                util::Hex(reinterpret_cast<uintptr_t>(L)), util::Hex(mainL));
+// Telemetry while the VM is not ready, so one log answers "why are the toggles still locked?".
+void MaybeLogPCallStats(uint64_t now) {
+  uint64_t due = g_nextStatsMs.load(std::memory_order_relaxed);
+  if (due == 0) {
+    g_nextStatsMs.compare_exchange_strong(due, now + kStatsFirstLogMs);
     return;
+  }
+  if (now < due || g_ready.load(std::memory_order_relaxed) || g_statsLogs.load() >= kStatsMaxLogs) return;
+  const int n = g_statsLogs.load();
+  const uint64_t gap = std::min<uint64_t>(kStatsFirstLogMs << std::min(n, 5), kStatsMaxLogMs);
+  if (!g_nextStatsMs.compare_exchange_strong(due, now + gap)) return;   // another thread logs
+  g_statsLogs.fetch_add(1);
+  const std::string probe = LastProbeError();
+  log::Info(kChannel,
+            "pcall mode: {} pcall(s), {} safe point(s); skipped {} bad layout, {} other VM, {} unreadable stack, {} busy; "
+            "last L={} vm={} | Lua.State L={} vm={}{} | {}{}{}",
+            g_pcs.calls.load(), g_pcs.points.load(), g_pcs.badLayout.load(), g_pcs.otherVm.load(), g_pcs.badStack.load(),
+            g_pcs.busy.load(), util::Hex(g_pcs.lastL.load()), util::Hex(g_pcs.lastKey.load()), util::Hex(g_mainL.load()),
+            util::Hex(g_mainKey.load()), Learning() ? " (learning)" : "", StatusText(),
+            probe.empty() ? "" : " | probe: ", probe);
+}
+
+void PCallSafePoint(void* Lp) {
+  const uintptr_t L = reinterpret_cast<uintptr_t>(Lp);
+  g_pcs.calls.fetch_add(1, std::memory_order_relaxed);
+  g_pcs.lastL.store(L, std::memory_order_relaxed);
+  const uint64_t now = GetTickCount64();
+  MaybeLogPCallStats(now);
+  if (now - g_lastPointMs.load(std::memory_order_relaxed) < kPointIntervalMs) return;
+
+  const Api a = ApiSnapshot();
+  if (!LooksLikeState(a, L)) {
+    g_pcs.badLayout.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  const uintptr_t key = VmKey(a, L);
+  g_pcs.lastKey.store(key, std::memory_order_relaxed);
+  CachedMainL(a);
+  const uintptr_t mainKey = g_learnFallback.load(std::memory_order_relaxed) ? 0 : g_mainKey.load(std::memory_order_relaxed);
+  if (mainKey) {
+    if (key != mainKey) {   // another VM than the game's main script machine
+      const uint64_t skips = g_pcs.otherVm.fetch_add(1, std::memory_order_relaxed) + 1;
+      uint64_t since = g_pcallSinceMs.load(std::memory_order_relaxed);
+      if (!since) g_pcallSinceMs.compare_exchange_strong(since, now);
+      else if (now - since >= kLearnFallbackMs && skips >= kLearnFallbackSkips && g_pcs.points.load() == 0 &&
+               !g_learnFallback.exchange(true))
+        log::Warn(kChannel, "pcall mode: the game never ran pcall on Lua.State's VM ({} vs {}); learning the VM from the "
+                  "game's own pcalls instead", util::Hex(key), util::Hex(mainKey));
+      return;
+    }
+  } else {
+    uintptr_t cand = g_candidateKey.load();
+    if (cand && now - g_candidateSeenMs.load(std::memory_order_relaxed) > kCandidateExpireMs &&
+        g_candidateKey.compare_exchange_strong(cand, 0))
+      cand = 0;
+    if (!cand && g_candidateKey.compare_exchange_strong(cand, key)) cand = key;
+    if (key != cand) {
+      g_pcs.otherVm.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+    g_candidateSeenMs.store(now, std::memory_order_relaxed);
   }
   // The game has a call staged on this stack; a chunk that leaked a slot would shift it.
   bool stackOk = false;
-  ReadStackTop(a, mainL, &stackOk);
-  if (!stackOk) return;
-  const uint64_t now = GetTickCount64();
-  if (now - g_lastPointMs.load(std::memory_order_relaxed) < kPointIntervalMs) return;
+  ReadStackTop(a, L, &stackOk);
+  if (!stackOk) {
+    g_pcs.badStack.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  // One thread at a time (OnScriptPoint's bookkeeping is single-threaded); recursive for the owner.
+  Lock& lock = PCallLock();
+  if (!TryEnterCriticalSection(&lock.cs)) {
+    g_pcs.busy.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  struct Leave {
+    CRITICAL_SECTION* cs;
+    ~Leave() { LeaveCriticalSection(cs); }
+  } leave{&lock.cs};
   g_lastPointMs.store(now, std::memory_order_relaxed);
+  g_pcs.points.fetch_add(1, std::memory_order_relaxed);
   g_scriptTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
   try {
-    OnScriptPoint(a, mainL);
+    OnScriptPoint(a, L, key);
   } catch (...) {
     t_inDrain = false;
     t_collector = nullptr;
@@ -619,9 +753,13 @@ Status GetStatus() {
 const char* StatusText() {
   switch (GetStatus()) {
     case Status::Unbound: return "Script VM unavailable (required bindings missing)";
-    case Status::WaitingForTick: return "Waiting for the game's script tick";
+    case Status::WaitingForTick:
+      return g_pcallMode.load() ? "Waiting for the game to run a script (load a save or start a mission)"
+                                : "Waiting for the game's script tick";
     case Status::WaitingForVm:
-      return g_resetInProgress.load() ? "Script VM is resetting" : "Waiting for the script VM (loading)";
+      if (g_resetInProgress.load()) return "Script VM is resetting";
+      return g_gameNotReady.load() ? "Waiting for the game world (load a save or start a mission)"
+                                   : "Waiting for the script VM (loading)";
     case Status::Ready: return "Script VM ready";
   }
   return "Script VM: unknown state";
@@ -642,6 +780,8 @@ std::vector<std::string> MissingBindings() {
 }
 
 bool Ready() { return GetStatus() == Status::Ready; }
+
+bool PCallMode() { return g_pcallMode.load(); }
 
 bool HasReturnValues() { return g_hasReturns.load(); }
 
@@ -692,6 +832,7 @@ void Install() {
       a.baseOff = *base;
       a.objSize = *obj;
     }
+    if (const auto g = b.Offset("Lua.GlobalOffset"); g && *g >= 0) a.globalOff = *g;
     {
       std::lock_guard lk(g_apiMutex);
       g_api = a;
@@ -722,13 +863,19 @@ void Install() {
       }
       g_pcallLockActive.store(false);
       g_mainLRefreshMs.store(0);
+      g_candidateKey.store(0);
+      g_learnFallback.store(false);
+      g_pcallSinceMs.store(0);
+      g_nextStatsMs.store(0);
+      g_statsLogs.store(0);
       g_pcallMode.store(true);
       const bool live =
           EnsureHook("vm.PCallLock", reinterpret_cast<uintptr_t>(a.pcall), &PCallDetour, g_pcallTarget, g_origPCall);
       g_hookLive.store(live);
       tasks::SetGameThreadHookActive(live);
-      log::Info(kChannel, "script VM: no tick hook on this build, using pcall safe points ({}; returns: {}, stack restore: {})",
-                live ? "hooked" : "hook FAILED", a.returns() ? "yes" : "no", a.stackOffsets ? "yes" : "no");
+      log::Info(kChannel, "script VM: Game.TickHook not needed, using pcall safe points instead ({}; returns: {}, stack restore: {}, VM identity: {})",
+                live ? "hooked" : "hook FAILED", a.returns() ? "yes" : "no", a.stackOffsets ? "yes" : "no",
+                a.globalOff >= 0 ? "global state" : "state pointer");
       return;
     }
     g_pcallMode.store(false);

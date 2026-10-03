@@ -305,7 +305,7 @@ const std::vector<CanonicalSymbol>& CanonicalSymbols() {
       {"Camera.MatrixTransposed", "constant", "0|1", "1 when the camera matrices are stored column-major (transposed before use)"},
       {"Game.IsLoading", "pointer", "u8", "Non-zero while a loading screen is active (InGame() is false)"},
       // Script VM (script_vm.h)
-      {"Game.TickHook", "function", "int64 (*)(void* machine)", "C_ScriptMachine::Tick-like; hooked, game scripts and queued chunks run inside it (required)"},
+      {"Game.TickHook", "function", "int64 (*)(void* machine)", "C_ScriptMachine::Tick-like; hooked, queued chunks run inside it. Optional: without it Chroma uses pcall safe points (needs Lua.State + the stack constants)"},
       {"Lua.StateOffset", "constant", "offset", "Offset of lua_State* inside the script machine (0xD0 on known builds); or bind Lua.State"},
       {"Lua.State", "pointer", "lua_State*", "Resolves directly to the lua_State* (alternative to Lua.StateOffset)"},
       {"Lua.LoadBuffer", "function", "int (*)(lua_State*, const char* buf, size_t len, const char* name)", "Compiles a chunk (required)"},
@@ -318,6 +318,7 @@ const std::vector<CanonicalSymbol>& CanonicalSymbols() {
       {"Lua.ApiTopOffset", "constant", "offset", "Offset of the stack top pointer in lua_State (0x48) for stack restore"},
       {"Lua.ApiBaseOffset", "constant", "offset", "Offset of the stack base pointer in lua_State (0x50) for stack restore"},
       {"Lua.ObjectSize", "constant", "size", "Size of one stack slot (16) for stack restore"},
+      {"Lua.GlobalOffset", "constant", "offset", "Offset of the global-state pointer in lua_State (0x10); pcall mode accepts every state of the main VM"},
       {"Lua.PCallLock", "constant", "0|1", "1 = also hook Lua.PCall with a critical section (default 1 when Lua.PCall is bound)"},
   };
   return kSymbols;

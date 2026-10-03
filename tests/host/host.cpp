@@ -7,7 +7,7 @@
 //  * optional: screenshot via CHROMA_TEST_SCREENSHOT, unload via CHROMA_TEST_UNLOAD_FRAME
 //
 // Usage: cg_testhost.exe [--frames N] [--dll path] [--screenshot out.bmp] [--screenshot-frame N]
-//                        [--open-menu] [--unload-frame N] [--config file.json] [--fake-vm]
+//                        [--open-menu] [--unload-frame N] [--config file.json] [--fake-vm] [--fake-vm-nostate] [--fake-vm-noglobal]
 #include <windows.h>
 
 #include <d3d11.h>
@@ -82,7 +82,7 @@ int wmain(int argc, wchar_t** argv) {
   }();
   fs::path dll = exeDir / L"Chroma.dll";
   fs::path configFile;
-  bool fakeVm = false;
+  bool fakeVm = false, fakeVmNoState = false, fakeVmNoGlobal = false;
   for (int i = 1; i < argc; ++i) {
     std::wstring a = argv[i];
     auto next = [&]() -> std::wstring { return i + 1 < argc ? argv[++i] : L""; };
@@ -94,6 +94,8 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--unload-frame") SetEnvironmentVariableW(L"CHROMA_TEST_UNLOAD_FRAME", next().c_str());
     else if (a == L"--config") configFile = next();
     else if (a == L"--fake-vm") fakeVm = true;
+    else if (a == L"--fake-vm-nostate") fakeVm = fakeVmNoState = true;
+    else if (a == L"--fake-vm-noglobal") fakeVm = fakeVmNoGlobal = true;   // reproduces 1.0.2 (main state only)
   }
 
   // Data folder lives next to the DLL: <dll dir>/Chroma/
@@ -102,8 +104,8 @@ int wmain(int argc, wchar_t** argv) {
   fs::create_directories(dataDir / L"bindings", ec);
   std::ofstream(dataDir / L"bindings" / L"test_host.json", std::ios::binary) << kBindings;
   if (fakeVm) {
-    if (!FakeVmInit()) return 4;
-    std::ofstream(dataDir / L"bindings" / L"test_host_vm.json", std::ios::binary) << FakeVmBindings();
+    if (!FakeVmInit(!fakeVmNoState)) return 4;
+    std::ofstream(dataDir / L"bindings" / L"test_host_vm.json", std::ios::binary) << FakeVmBindings(!fakeVmNoGlobal);
   } else {
     fs::remove(dataDir / L"bindings" / L"test_host_vm.json", ec);
   }

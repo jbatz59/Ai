@@ -8,6 +8,10 @@
 // Bindings (see docs/BINDINGS.md):
 //   required  Game.TickHook      function  C_ScriptMachine::Tick-like, int64 (*)(void* machine). Hooked;
 //                                          everything below runs inside it, on the script thread.
+//               — or —  pcall mode (no tick hook): Lua.PCall is hooked and chunks run right before
+//                                          the game's own pcall on any state of the main VM (same
+//                                          Lua.GlobalOffset global state as Lua.State). Needs the
+//                                          three stack constants below.
 //             Lua.StateOffset    constant  offset of lua_State* inside the machine (0xD0 on known builds)
 //               — or —  Lua.State pointer  resolves directly to the lua_State*
 //             Lua.LoadBuffer     function  int (*)(lua_State*, const char* buf, size_t len, const char* name)
@@ -19,6 +23,7 @@
 //             Lua.ToLString      function  const char* (*)(lua_State*, int idx, size_t* len)  (fallback for errors)
 //             Lua.ResetState     function  int64 (*)(void* machine, char async, uint64 timeout); returns 3 when ready
 //             Lua.ApiTopOffset / Lua.ApiBaseOffset / Lua.ObjectSize  constants (0x48 / 0x50 / 16) — stack restore
+//             Lua.GlobalOffset   constant  offset of the global-state pointer in lua_State (0x10) — VM identity
 //             Lua.PCallLock      constant  1 = also hook Lua.PCall with a critical section so worker-thread pcalls
 //                                          never overlap our chunks (default 1 when Lua.PCall is bound)
 //
@@ -40,6 +45,7 @@ Status GetStatus();
 const char* StatusText();                   // human readable, for UI
 std::vector<std::string> MissingBindings(); // required ones only
 bool Ready();
+bool PCallMode();                           // running at pcall safe points (no tick hook)
 bool HasReturnValues();                     // optional C-closure bindings resolved
 
 struct Result {
