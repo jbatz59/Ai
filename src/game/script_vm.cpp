@@ -38,6 +38,11 @@ constexpr int kGlobalsIndex = -10002;   // LUA_GLOBALSINDEX in HKS
 constexpr size_t kMaxQueue = 256;
 constexpr size_t kMaxPrinted = 2000;
 constexpr uint64_t kReadyTicks = 60;
+// pcall safe-point mode (no tick hook): script points are rate-limited, so fewer are needed.
+constexpr uint64_t kReadyPointsPCall = 12;
+constexpr uint64_t kPointIntervalMs = 15;
+constexpr uint64_t kMainLRefreshMs = 100;
+constexpr uint64_t kMismatchLogAfter = 600;
 constexpr size_t kMaxErrorLen = 4096;
 constexpr DWORD kUnloadWaitMs = 2000;
 constexpr char kPrintMarker = '\x01';   // __cg_emit("\1...") => print ring instead of the collector
@@ -99,6 +104,15 @@ std::atomic<bool> g_hookLive{false};
 std::atomic<bool> g_unloading{false};
 std::atomic<bool> g_pcallLockActive{false};
 std::atomic<DWORD> g_scriptTid{0};
+
+// pcall safe-point mode: used when Game.TickHook does not resolve. Our chunks run on the game's own
+// script thread right before the game calls pcall on the MAIN lua_State (an API boundary, the same
+// place a C function may call back into Lua). The state pointer from the Lua.State binding is only
+// trusted when the game itself passes exactly that pointer to pcall.
+std::atomic<bool> g_pcallMode{false};
+std::atomic<uintptr_t> g_mainL{0};
+std::atomic<uint64_t> g_mainLRefreshMs{0};
+std::atomic<uint64_t> g_lastPointMs{0};
 
 // ---- VM readiness -----------------------------------------------------------------------------
 std::atomic<bool> g_seenMachine{false};
@@ -211,14 +225,15 @@ uintptr_t ReadStackTop(const Api& a, uintptr_t L, bool* ok) {
   if (!top || !base || *top < *base) return 0;
   if (a.objSize > 0 && ((*top - *base) % static_cast<uintptr_t>(a.objSize)) != 0) return 0;
   *ok = true;
-  return *top;
+  return *top - *base;   // relative to base: the stack may be reallocated while our chunk runs
 }
 
 void RestoreStackTop(const Api& a, uintptr_t L, uintptr_t saved, bool haveSaved) {
   if (!haveSaved) return;
   auto* slot = reinterpret_cast<uintptr_t*>(L + static_cast<uintptr_t>(a.topOff));
+  const uintptr_t target = *reinterpret_cast<const uintptr_t*>(L + static_cast<uintptr_t>(a.baseOff)) + saved;
   // Only ever pop (never expose stale slots above the current top).
-  if (*slot >= saved) *slot = saved;
+  if (*slot >= target) *slot = target;
 }
 
 std::string ErrorText(const Api& a, uintptr_t L, const char* what, int status) {
@@ -317,14 +332,37 @@ void RegisterEmit(const Api& a, uintptr_t L, uint64_t gen) {
 }
 
 // ---- tick ------------------------------------------------------------------------------------
+// A real HKS lua_State has a sane API stack: base <= top, both plausible, whole 16-byte objects.
+bool LooksLikeState(const Api& a, uintptr_t L) {
+  if (!mem::IsPlausiblePtr(L)) return false;
+  if (!a.stackOffsets) return true;
+  const auto top = mem::Read<uintptr_t>(L + static_cast<uintptr_t>(a.topOff));
+  const auto base = mem::Read<uintptr_t>(L + static_cast<uintptr_t>(a.baseOff));
+  if (!top || !base || !mem::IsPlausiblePtr(*top) || !mem::IsPlausiblePtr(*base) || *top < *base) return false;
+  const uintptr_t span = *top - *base;
+  return span % static_cast<uintptr_t>(a.objSize) == 0 && span / static_cast<uintptr_t>(a.objSize) < 1000000;
+}
+
 uintptr_t ResolveState(const Api& a, void* machine) {
-  if (a.stateOffset) {
-    if (!machine) return 0;
+  uintptr_t L = 0;
+  if (a.stateOffset && machine) {
     const auto p = mem::Read<uintptr_t>(reinterpret_cast<uintptr_t>(machine) + static_cast<uintptr_t>(*a.stateOffset));
-    return p && mem::IsPlausiblePtr(*p) ? *p : 0;
+    L = p ? *p : 0;
+  } else {
+    const auto p = Bindings::Get().Addr("Lua.State");
+    L = p ? *p : 0;
   }
-  const auto p = Bindings::Get().Addr("Lua.State");
-  return p && mem::IsPlausiblePtr(*p) ? *p : 0;
+  return LooksLikeState(a, L) ? L : 0;
+}
+
+// Main lua_State for pcall mode, re-resolved at most every 100 ms (pcall is a hot path).
+uintptr_t CachedMainL(const Api& a) {
+  const uint64_t now = GetTickCount64();
+  if (now - g_mainLRefreshMs.load(std::memory_order_relaxed) >= kMainLRefreshMs) {
+    g_mainLRefreshMs.store(now, std::memory_order_relaxed);
+    g_mainL.store(ResolveState(a, nullptr), std::memory_order_relaxed);
+  }
+  return g_mainL.load(std::memory_order_relaxed);
 }
 
 void BumpGeneration() {
@@ -332,13 +370,12 @@ void BumpGeneration() {
   g_ready.store(false);
 }
 
-void OnTick(void* machine) {
+void OnScriptPoint(const Api& a, uintptr_t L) {
   const uint64_t tick = g_tickCount.fetch_add(1) + 1;
   g_seenMachine.store(true);
-  const Api a = ApiSnapshot();
   if (!a.loadBuffer || !a.pcall) return;
+  const uint64_t readyTicks = g_pcallMode.load() ? kReadyPointsPCall : kReadyTicks;
 
-  const uintptr_t L = ResolveState(a, machine);
   if (!L) {
     if (g_lastL) {
       g_lastL = 0;
@@ -365,10 +402,10 @@ void OnTick(void* machine) {
   if (g_resetInProgress.load()) {
     ready = false;
   } else if (g_resetObserved.load()) {
-    ready = tick - g_resetDoneTick.load() >= kReadyTicks;
+    ready = tick - g_resetDoneTick.load() >= readyTicks;
   } else {
-    ready = g_sameTicks >= kReadyTicks && g_probeGen == gen;
-    needProbe = g_sameTicks >= kReadyTicks && g_probeGen != gen && tick >= g_nextProbeTick;
+    ready = g_sameTicks >= readyTicks && g_probeGen == gen;
+    needProbe = g_sameTicks >= readyTicks && g_probeGen != gen && tick >= g_nextProbeTick;
   }
   if (!ready && !needProbe) {
     g_ready.store(false);
@@ -428,6 +465,11 @@ void OnTick(void* machine) {
   }
 }
 
+void OnTick(void* machine) {
+  const Api a = ApiSnapshot();
+  OnScriptPoint(a, ResolveState(a, machine));
+}
+
 int64_t TickDetour(void* machine) {
   InsideGuard guard;
   g_scriptTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
@@ -469,11 +511,43 @@ int64_t ResetDetour(void* machine, char async, uint64_t timeout) {
   return ret;
 }
 
+void PCallSafePoint(void* L) {
+  const Api a = ApiSnapshot();
+  const uintptr_t mainL = CachedMainL(a);
+  if (!mainL || reinterpret_cast<uintptr_t>(L) != mainL) {   // only the main state, as passed by the game
+    static std::atomic<uint64_t> misses{0};
+    if (misses.fetch_add(1, std::memory_order_relaxed) + 1 == kMismatchLogAfter)
+      log::Warn(kChannel, "pcall mode: game calls pcall on L={} but Lua.State resolves to {}; waiting",
+                util::Hex(reinterpret_cast<uintptr_t>(L)), util::Hex(mainL));
+    return;
+  }
+  // The game has a call staged on this stack; a chunk that leaked a slot would shift it.
+  bool stackOk = false;
+  ReadStackTop(a, mainL, &stackOk);
+  if (!stackOk) return;
+  const uint64_t now = GetTickCount64();
+  if (now - g_lastPointMs.load(std::memory_order_relaxed) < kPointIntervalMs) return;
+  g_lastPointMs.store(now, std::memory_order_relaxed);
+  g_scriptTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
+  try {
+    OnScriptPoint(a, mainL);
+  } catch (...) {
+    t_inDrain = false;
+    t_collector = nullptr;
+  }
+  try {
+    tasks::DrainGame();
+  } catch (...) {
+  }
+}
+
 int PCallDetour(void* L, int nargs, int nresults, int errfunc) {
   InsideGuard guard;
   const PCallFn orig = g_origPCall.load(std::memory_order_acquire);
   if (!orig) return -1;
-  if (t_inDrain || !g_pcallLockActive.load(std::memory_order_relaxed)) return orig(L, nargs, nresults, errfunc);
+  if (t_inDrain) return orig(L, nargs, nresults, errfunc);
+  if (g_pcallMode.load(std::memory_order_relaxed) && !g_unloading.load(std::memory_order_relaxed)) PCallSafePoint(L);
+  if (!g_pcallLockActive.load(std::memory_order_relaxed)) return orig(L, nargs, nresults, errfunc);
   Lock& lock = PCallLock();
   EnterCriticalSection(&lock.cs);
   struct Leave {
@@ -556,7 +630,11 @@ const char* StatusText() {
 std::vector<std::string> MissingBindings() {
   std::vector<std::string> out;
   const auto& b = Bindings::Get();
-  if (!b.Has("Game.TickHook")) out.emplace_back("Game.TickHook");
+  // Without a tick hook the VM runs at pcall safe points, which needs the Lua.State pointer path.
+  const bool stack = b.Has("Lua.ApiTopOffset") && b.Has("Lua.ApiBaseOffset") && b.Has("Lua.ObjectSize");
+  const bool pcallMode = !b.Has("Game.TickHook") && b.Has("Lua.State") && b.Has("Lua.PCall") && stack;
+  if (!b.Has("Game.TickHook") && !pcallMode)
+    out.emplace_back("Game.TickHook (or Lua.State + Lua.ApiTopOffset/ApiBaseOffset/ObjectSize for pcall mode)");
   if (!b.Has("Lua.StateOffset") && !b.Has("Lua.State")) out.emplace_back("Lua.StateOffset (or Lua.State)");
   if (!b.Has("Lua.LoadBuffer")) out.emplace_back("Lua.LoadBuffer");
   if (!b.Has("Lua.PCall")) out.emplace_back("Lua.PCall");
@@ -627,6 +705,33 @@ void Install() {
 
     const auto tick = b.Addr("Game.TickHook");
     const bool haveState = a.stateOffset.has_value() || b.Has("Lua.State");
+    const bool pcallMode = (!tick || !*tick) && b.Has("Lua.State") && a.loadBuffer && a.pcall && a.stackOffsets;
+    if (pcallMode) {
+      // No tick hook on this build: run at pcall safe points on the main lua_State instead. The
+      // global pcall lock is not used here (it can deadlock engine threads); chunks only run on the
+      // script thread, at the same boundary where the game itself calls into Lua.
+      {
+        std::lock_guard lk(g_apiMutex);
+        g_api.stateOffset.reset();   // resolve the state through the Lua.State pointer path
+      }
+      RemoveHook("vm.Tick", g_tickTarget, g_origTick);
+      if (const auto reset = b.Addr("Lua.ResetState"); reset && *reset) {
+        EnsureHook("vm.ResetState", *reset, &ResetDetour, g_resetTarget, g_origReset);
+      } else {
+        RemoveHook("vm.ResetState", g_resetTarget, g_origReset);
+      }
+      g_pcallLockActive.store(false);
+      g_mainLRefreshMs.store(0);
+      g_pcallMode.store(true);
+      const bool live =
+          EnsureHook("vm.PCallLock", reinterpret_cast<uintptr_t>(a.pcall), &PCallDetour, g_pcallTarget, g_origPCall);
+      g_hookLive.store(live);
+      tasks::SetGameThreadHookActive(live);
+      log::Info(kChannel, "script VM: no tick hook on this build, using pcall safe points ({}; returns: {}, stack restore: {})",
+                live ? "hooked" : "hook FAILED", a.returns() ? "yes" : "no", a.stackOffsets ? "yes" : "no");
+      return;
+    }
+    g_pcallMode.store(false);
     if (!tick || !*tick || !a.loadBuffer || !a.pcall || !haveState) {
       std::string missing;
       for (const auto& m : MissingBindings()) missing += (missing.empty() ? "" : ", ") + m;
@@ -682,6 +787,7 @@ void Uninstall() {
     for (const char* name : {"vm.Tick", "vm.ResetState", "vm.PCallLock"})
       if (hooks.Exists(name)) hooks.SetEnabled(name, false);
     g_pcallLockActive.store(false);
+    g_pcallMode.store(false);
     WaitInside(kUnloadWaitMs);
     for (const char* name : {"vm.Tick", "vm.ResetState", "vm.PCallLock"})
       if (hooks.Exists(name)) hooks.Remove(name);

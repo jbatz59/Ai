@@ -7,7 +7,7 @@
 //  * optional: screenshot via CHROMA_TEST_SCREENSHOT, unload via CHROMA_TEST_UNLOAD_FRAME
 //
 // Usage: cg_testhost.exe [--frames N] [--dll path] [--screenshot out.bmp] [--screenshot-frame N]
-//                        [--open-menu] [--unload-frame N] [--config file.json]
+//                        [--open-menu] [--unload-frame N] [--config file.json] [--fake-vm]
 #include <windows.h>
 
 #include <d3d11.h>
@@ -18,6 +18,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#include "fake_vm.h"
 
 namespace fs = std::filesystem;
 
@@ -80,6 +82,7 @@ int wmain(int argc, wchar_t** argv) {
   }();
   fs::path dll = exeDir / L"Chroma.dll";
   fs::path configFile;
+  bool fakeVm = false;
   for (int i = 1; i < argc; ++i) {
     std::wstring a = argv[i];
     auto next = [&]() -> std::wstring { return i + 1 < argc ? argv[++i] : L""; };
@@ -90,6 +93,7 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--open-menu") SetEnvironmentVariableW(L"CHROMA_TEST_OPEN_MENU", L"1");
     else if (a == L"--unload-frame") SetEnvironmentVariableW(L"CHROMA_TEST_UNLOAD_FRAME", next().c_str());
     else if (a == L"--config") configFile = next();
+    else if (a == L"--fake-vm") fakeVm = true;
   }
 
   // Data folder lives next to the DLL: <dll dir>/Chroma/
@@ -97,7 +101,16 @@ int wmain(int argc, wchar_t** argv) {
   std::error_code ec;
   fs::create_directories(dataDir / L"bindings", ec);
   std::ofstream(dataDir / L"bindings" / L"test_host.json", std::ios::binary) << kBindings;
-  if (!configFile.empty()) fs::copy_file(configFile, dataDir / L"config.json", fs::copy_options::overwrite_existing, ec);
+  if (fakeVm) {
+    if (!FakeVmInit()) return 4;
+    std::ofstream(dataDir / L"bindings" / L"test_host_vm.json", std::ios::binary) << FakeVmBindings();
+  } else {
+    fs::remove(dataDir / L"bindings" / L"test_host_vm.json", ec);
+  }
+  if (!configFile.empty()) {   // stream copy: fs::copy_file is unreliable under MinGW + Wine
+    std::ifstream in(configFile, std::ios::binary);
+    std::ofstream(dataDir / L"config.json", std::ios::binary | std::ios::trunc) << in.rdbuf();
+  }
 
   WNDCLASSEXW wc{sizeof(wc)};
   wc.lpfnWndProc = WndProc;
@@ -141,6 +154,7 @@ int wmain(int argc, wchar_t** argv) {
   std::printf("host: LoadLibrary(%ls) -> %p (err %lu)\n", dll.c_str(), static_cast<void*>(mod), mod ? 0ul : GetLastError());
   if (!mod) return 3;
   const std::wstring dllName = dll.filename().wstring();
+  int demigodFrame = -1, unbalanced = 0, gameErrors = 0;
 
   for (int f = 0; f < frames && g_running; ++f) {
     MSG msg;
@@ -152,6 +166,12 @@ int wmain(int argc, wchar_t** argv) {
     g_anchor.timeOfDay = g_anchor.timeOfDay + 0.01f * g_anchor.timeScale;
     if (g_anchor.timeOfDay >= 24.0f) g_anchor.timeOfDay = 0.0f;
     g_player.health = g_player.health > 1.0f ? g_player.health - 0.05f : 100.0f;
+    if (fakeVm) {
+      const FakeVmFrame vf = FakeVmTick();
+      if (!vf.stackBalanced) ++unbalanced;
+      if (vf.status != 0) ++gameErrors;
+      if (vf.demigod && demigodFrame < 0) demigodFrame = f;
+    }
 
     const float t = static_cast<float>(f) / 120.0f;
     const float clear[4] = {0.10f + 0.05f * (t - static_cast<int>(t)), 0.11f, 0.14f, 1.0f};
@@ -164,6 +184,9 @@ int wmain(int argc, wchar_t** argv) {
   const bool stillLoaded = GetModuleHandleW(dllName.c_str()) != nullptr;
   std::printf("host: frames done; chroma_loaded=%d health=%.2f time=%.2f\n", stillLoaded ? 1 : 0, g_player.health,
               g_anchor.timeOfDay);
+  if (fakeVm)
+    std::printf("host: fakevm demigod=%d first_frame=%d unbalanced_frames=%d game_pcall_errors=%d\n", demigodFrame >= 0 ? 1 : 0,
+                demigodFrame, unbalanced, gameErrors);
   rtv->Release();
   ctx->Release();
   sc->Release();

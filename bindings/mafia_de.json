@@ -7,7 +7,7 @@
       "kind": "function",
       "steps": [ { "pattern": "40 53 48 83 EC 20 48 8B D9 48 8B 89 D0 00 00 00 48 85 C9 74" } ],
       "verified": false,
-      "notes": "C_ScriptMachine::Tick (reads lua_State from this+0xD0). Pattern from Kamzik123/Mafia3ScriptHook (MIT, 2026) for Mafia III DE - same Hangar 13 engine and Havok Script lineage, may match Mafia DE."
+      "notes": "C_ScriptMachine::Tick (reads lua_State from this+0xD0). Pattern from Kamzik123/Mafia3ScriptHook (MIT, 2026) for Mafia III DE - same Hangar 13 engine and Havok Script lineage. Does NOT match Mafia DE Steam build PE 0x6092B6F8 (every other Lua.* symbol does); without it Chroma runs scripts at pcall safe points on the Lua.State pointer instead, so leaving this unresolved is fine."
     },
     "Lua.ResetState": {
       "kind": "function",
