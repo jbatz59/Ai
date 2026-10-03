@@ -198,6 +198,18 @@ void Init(const std::filesystem::path& file) {
   }
 }
 
+void FlushIfStale() {
+  ReentryGuard guard;
+  if (!guard.acquired) return;
+  try {
+    State& s = S();
+    std::unique_lock lock(s.mutex, std::try_to_lock);   // never stall the render thread on a busy logger
+    if (!lock.owns_lock() || s.pending.empty() || util::NowMs() - s.lastFlushMs < kFlushIntervalMs) return;
+    FlushLocked(s);
+  } catch (...) {
+  }
+}
+
 void Shutdown() {
   ReentryGuard guard;
   if (!guard.acquired) return;

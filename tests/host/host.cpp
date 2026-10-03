@@ -8,6 +8,7 @@
 //
 // Usage: cg_testhost.exe [--frames N] [--dll path] [--screenshot out.bmp] [--screenshot-frame N]
 //                        [--open-menu] [--unload-frame N] [--config file.json] [--fake-vm] [--fake-vm-nostate] [--fake-vm-noglobal]
+//                        [--exhaust-near]
 #include <windows.h>
 
 #include <d3d11.h>
@@ -65,6 +66,28 @@ static const char* kBindings = R"json({
 
 static bool g_running = true;
 
+// Like Mafia: DE, whose reservations fill the address space around its image: reserve every free
+// region within ±2 GB of the exe, so MinHook cannot place a trampoline near exe code.
+static size_t ExhaustNearMemory() {
+  const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+  const uintptr_t lo = base > 0x90000000ull ? base - 0x80000000ull : 0x10000ull;
+  const uintptr_t hi = base + 0x80000000ull;
+  size_t regions = 0;
+  for (uintptr_t p = lo; p < hi;) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof(mbi))) break;
+    const uintptr_t rb = reinterpret_cast<uintptr_t>(mbi.BaseAddress), re = rb + mbi.RegionSize;
+    if (mbi.State == MEM_FREE) {
+      const uintptr_t a = (rb + 0xFFFF) & ~static_cast<uintptr_t>(0xFFFF);
+      const uintptr_t e = (re < hi ? re : hi) & ~static_cast<uintptr_t>(0xFFFF);
+      if (e > a && VirtualAlloc(reinterpret_cast<void*>(a), e - a, MEM_RESERVE, PAGE_NOACCESS)) ++regions;
+    }
+    if (re <= p) break;
+    p = re;
+  }
+  return regions;
+}
+
 static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
   if (m == WM_CLOSE || m == WM_DESTROY) {
     g_running = false;
@@ -82,7 +105,7 @@ int wmain(int argc, wchar_t** argv) {
   }();
   fs::path dll = exeDir / L"Chroma.dll";
   fs::path configFile;
-  bool fakeVm = false, fakeVmNoState = false, fakeVmNoGlobal = false;
+  bool fakeVm = false, fakeVmNoState = false, fakeVmNoGlobal = false, exhaustNear = false;
   for (int i = 1; i < argc; ++i) {
     std::wstring a = argv[i];
     auto next = [&]() -> std::wstring { return i + 1 < argc ? argv[++i] : L""; };
@@ -96,6 +119,7 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--fake-vm") fakeVm = true;
     else if (a == L"--fake-vm-nostate") fakeVm = fakeVmNoState = true;
     else if (a == L"--fake-vm-noglobal") fakeVm = fakeVmNoGlobal = true;   // reproduces 1.0.2 (main state only)
+    else if (a == L"--exhaust-near") exhaustNear = true;   // reproduces MH_ERROR_MEMORY_ALLOC (Mafia DE)
   }
 
   // Data folder lives next to the DLL: <dll dir>/Chroma/
@@ -152,6 +176,7 @@ int wmain(int argc, wchar_t** argv) {
   dev->CreateRenderTargetView(bb, nullptr, &rtv);
   bb->Release();
 
+  if (exhaustNear) std::printf("host: reserved %zu free region(s) within 2 GB of the exe\n", ExhaustNearMemory());
   HMODULE mod = LoadLibraryW(dll.c_str());
   std::printf("host: LoadLibrary(%ls) -> %p (err %lu)\n", dll.c_str(), static_cast<void*>(mod), mod ? 0ul : GetLastError());
   if (!mod) return 3;

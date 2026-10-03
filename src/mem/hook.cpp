@@ -44,9 +44,14 @@ void Hooks::Shutdown() {
     }
     MH_DisableHook(MH_ALL_HOOKS);
     for (auto it = hooks_.rbegin(); it != hooks_.rend(); ++it) {
+      if (it->farJump) {
+        SetFarEnabled(*it, false);   // trampoline stays allocated: a thread may still be inside it
+        continue;
+      }
       const MH_STATUS s = MH_RemoveHook(reinterpret_cast<void*>(it->target));
       if (s != MH_OK) log::Warn("mem", "hook '{}': MH_RemoveHook failed: {}", it->name, StatusText(s));
     }
+    far_.clear();
     const size_t n = hooks_.size();
     hooks_.clear();
     MH_Uninitialize();
@@ -78,8 +83,30 @@ bool Hooks::Install(std::string name, void* target, void* detour, void** origina
       }
     }
     hooks_.reserve(hooks_.size() + 1);   // reserve first so push_back below cannot throw
+    far_.reserve(far_.size() + 1);
     void* trampoline = nullptr;
     MH_STATUS s = MH_CreateHook(target, detour, &trampoline);
+    if (s == MH_ERROR_MEMORY_ALLOC) {
+      // No free memory within ±1 GB of the target: big games reserve the space around their image.
+      const auto at = reinterpret_cast<uintptr_t>(target);
+      farhook::Hook fh;
+      std::string err;
+      if (!farhook::Create(at, detour, fh, err)) {
+        log::Warn("mem", "hook '{}': no free memory near {:#x} and the far-jump fallback refused: {}", name, at, err);
+        return false;
+      }
+      if (original) *original = fh.trampoline;   // before enabling: the detour may run right away
+      if (enable && !farhook::SetEnabled(fh, true, err)) {
+        log::Warn("mem", "hook '{}': far-jump enable failed: {}", name, err);
+        if (original) *original = nullptr;
+        return false;
+      }
+      far_.push_back(fh);
+      hooks_.push_back(Info{name, at, reinterpret_cast<uintptr_t>(detour), enable, true});
+      log::Info("mem", "hook '{}' installed at {:#x} via far jump (no free memory within 1 GB; {} bytes moved){}", name, at,
+                fh.len, enable ? "" : " (disabled)");
+      return true;
+    }
     if (s != MH_OK) {
       log::Warn("mem", "hook '{}': MH_CreateHook({:#x}) failed: {}", name, reinterpret_cast<uintptr_t>(target), StatusText(s));
       return false;
@@ -108,6 +135,7 @@ bool Hooks::SetEnabled(std::string_view name, bool enabled) {
     for (Info& h : hooks_) {
       if (h.name != name) continue;
       if (h.enabled == enabled) return true;
+      if (h.farJump) return SetFarEnabled(h, enabled);
       void* t = reinterpret_cast<void*>(h.target);
       const MH_STATUS s = enabled ? MH_EnableHook(t) : MH_DisableHook(t);
       if (s != MH_OK) {
@@ -128,6 +156,17 @@ bool Hooks::Remove(std::string_view name) {
     std::lock_guard lock(mutex_);
     for (auto it = hooks_.begin(); it != hooks_.end(); ++it) {
       if (it->name != name) continue;
+      if (it->farJump) {
+        if (!SetFarEnabled(*it, false)) return false;
+        for (auto f = far_.begin(); f != far_.end(); ++f) {
+          if (f->target != it->target) continue;
+          far_.erase(f);   // the trampoline itself is never freed
+          break;
+        }
+        log::Info("mem", "hook '{}' removed", it->name);
+        hooks_.erase(it);
+        return true;
+      }
       void* t = reinterpret_cast<void*>(it->target);
       if (it->enabled) {
         const MH_STATUS s = MH_DisableHook(t);
@@ -147,6 +186,20 @@ bool Hooks::Remove(std::string_view name) {
   } catch (...) {
     return false;
   }
+}
+
+bool Hooks::SetFarEnabled(Info& h, bool enabled) {
+  for (farhook::Hook& f : far_) {
+    if (f.target != h.target) continue;
+    std::string err;
+    if (!farhook::SetEnabled(f, enabled, err)) {
+      log::Warn("mem", "hook '{}': far-jump {} failed: {}", h.name, enabled ? "enable" : "disable", err);
+      return false;
+    }
+    h.enabled = enabled;
+    return true;
+  }
+  return false;
 }
 
 bool Hooks::Exists(std::string_view name) const {

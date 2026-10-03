@@ -62,6 +62,7 @@ struct Step {
   std::string text;      // module / class / string / symbol / export dll / section
   std::string text2;     // export function name
   bool wide = false;     // string
+  bool unique = false;   // pattern: fail unless it matches exactly once (ambiguous = unsafe)
   int64_t n = 0;         // add amount, xref index, pattern index, vfunc index, rip disp offset
   int64_t n2 = 0;        // rip instruction length
   mem::Pattern pattern;  // pattern
@@ -155,6 +156,11 @@ bool ParseStep(const json& j, Step& s, bool& skip, std::string& err) {
       if (auto it = j.find("section"); it != j.end()) {
         if (!it->is_string()) { err = "'section' must be a string"; return false; }
         s.text2 = it->get<std::string>();
+      }
+      if (auto it = j.find("unique"); it != j.end()) {
+        if (!it->is_boolean()) { err = "'unique' must be true or false"; return false; }
+        s.unique = it->get<bool>();
+        if (s.unique && s.n != 0) { err = "'unique' cannot be combined with 'index'"; return false; }
       }
       return true;
     }
@@ -472,7 +478,7 @@ class Resolver {
         }
         case Op::Pattern: {
           const mem::Module& m = mod();
-          const size_t want = static_cast<size_t>(s.n) + 1;
+          const size_t want = s.unique ? 2 : static_cast<size_t>(s.n) + 1;
           std::vector<uintptr_t> hits;
           std::string where;
           if (s.text2.empty()) {
@@ -490,6 +496,10 @@ class Resolver {
           if (hits.size() < want) {
             err = at + (hits.empty() ? std::string("no match") : "only " + std::to_string(hits.size()) + " match(es), index " + std::to_string(s.n) + " requested") +
                   " for '" + s.text + "' in " + where + " of " + m.name;
+            return false;
+          }
+          if (s.unique && hits.size() > 1) {
+            err = at + "'" + s.text + "' matches more than once in " + where + " of " + m.name + " (ambiguous; 'unique' requested)";
             return false;
           }
           cursor = hits[static_cast<size_t>(s.n)];

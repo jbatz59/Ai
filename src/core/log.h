@@ -20,6 +20,7 @@ struct Entry {
 
 void Init(const std::filesystem::path& file);   // truncates file; safe to call once
 void Shutdown();                                 // flushes and closes file
+void FlushIfStale();                             // writes lines older than 1 s (called every frame)
 void SetMinLevel(Level lvl);                     // default Info (Debug in debug builds)
 Level MinLevel();
 

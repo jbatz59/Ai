@@ -28,6 +28,7 @@
 // Steps (executed left to right on a running uintptr_t "cursor"):
 //   {"module": "name.exe"}           cursor = module base (default: host exe when name omitted/"")
 //   {"pattern": "48 8B 05 ? ? ? ?", "index": 0, "section": ".text"}   first (or index-th) match in module
+//                                    "unique": true => fail unless it matches exactly once
 //   {"rtti_vtable": "C_Player2"}     cursor = primary vtable address of RTTI class
 //   {"rtti_instance": "C_Game"}      cursor = first live object of class (slow heap scan, cached)
 //   {"string": "text", "wide": false} cursor = address of string literal in module

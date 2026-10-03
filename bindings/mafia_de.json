@@ -5,13 +5,21 @@
   "symbols": {
     "Game.TickHook": {
       "kind": "function",
-      "steps": [ { "pattern": "40 53 48 83 EC 20 48 8B D9 48 8B 89 D0 00 00 00 48 85 C9 74" } ],
+      "steps": [
+        {
+          "pattern": "40 53 48 83 EC 20 48 8B D9 48 8B 89 D0 00 00 00 48 85 C9 74"
+        }
+      ],
       "verified": false,
       "notes": "C_ScriptMachine::Tick (reads lua_State from this+0xD0). Pattern from Kamzik123/Mafia3ScriptHook (MIT, 2026) for Mafia III DE - same Hangar 13 engine and Havok Script lineage. Does NOT match Mafia DE Steam build PE 0x6092B6F8 (every other Lua.* symbol does); without it Chroma runs scripts at pcall safe points on the Lua.State pointer instead, so leaving this unresolved is fine."
     },
     "Lua.ResetState": {
       "kind": "function",
-      "steps": [ { "pattern": "48 89 5C 24 08 57 48 83 EC 20 48 8B F9 E8 ?? ?? ?? ?? 8B D8 83 F8 03 75" } ],
+      "steps": [
+        {
+          "pattern": "48 89 5C 24 08 57 48 83 EC 20 48 8B F9 E8 ?? ?? ?? ?? 8B D8 83 F8 03 75"
+        }
+      ],
       "verified": false,
       "notes": "C_ScriptGameMachine::ResetState, returns 3 when the VM is ready. Kamzik123/Mafia3ScriptHook (MIT), Mafia III DE pattern."
     },
@@ -23,55 +31,164 @@
     },
     "Lua.State": {
       "kind": "pointer",
-      "steps": [ { "pattern": "48 89 05 ? ? ? ? 48 8B 10 FF 92 ? ? ? ?" }, { "rip": [3, 7] }, { "deref": true }, { "add": "0xD0" }, { "deref": true } ],
+      "steps": [
+        {
+          "pattern": "48 89 05 ? ? ? ? 48 8B 10 FF 92 ? ? ? ?"
+        },
+        {
+          "rip": [
+            3,
+            7
+          ]
+        },
+        {
+          "deref": true
+        },
+        {
+          "add": "0xD0"
+        },
+        {
+          "deref": true
+        }
+      ],
       "verified": false,
       "notes": "Global C_ScriptGameMachine* then lua_State at +0xD0. MartinJK/Mafia-Definitive-Edition-ScriptHook M1DE component (MIT, 2020 launch build; its pattern path was disabled in source, it used the hard-coded global RVA 0x6312DA0). Resolves to RVA 0x6315F10 on build 0x6092B6F8. Without Game.TickHook this identifies the main VM for pcall mode; if it is null or wrong, Chroma learns the VM from the game's own pcalls."
     },
     "Lua.PCall": {
       "kind": "function",
-      "steps": [ { "pattern": "48 89 5C 24 18 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 4C 63 F2" } ],
-      "fallbacks": [ [ { "pattern": "E8 ? ? ? ? 85 C0 74 05 48 83 43 ? ?" }, { "call": true } ] ],
+      "steps": [
+        {
+          "pattern": "48 89 5C 24 18 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 4C 63 F2"
+        }
+      ],
+      "fallbacks": [
+        [
+          {
+            "pattern": "E8 ? ? ? ? 85 C0 74 05 48 83 43 ? ?"
+          },
+          {
+            "call": true
+          }
+        ]
+      ],
       "verified": false,
-      "notes": "hksi_lua_pcall(L, nargs, nresults, errfunc). Primary: Kamzik123 (MIT, Mafia III DE). Fallback: MartinJK M1DE (MIT, 2020 Mafia DE call site)."
+      "notes": "hksi_lua_pcall(L, nargs, nresults, errfunc). Primary: Kamzik123 (MIT, Mafia III DE). Fallback: MartinJK M1DE (MIT, 2020 Mafia DE call site). On build 0x6092B6F8 the primary pattern does not match; the MartinJK call-site fallback resolves it to RVA 0x4912960. The game reserves the memory around its image, so the hook on it is installed with a 14-byte absolute jump (far-hook fallback) rather than MinHook's rel32."
     },
     "Lua.LoadBuffer": {
       "kind": "function",
-      "steps": [ { "pattern": "48 81 C2 58 05 00 00 48 89 7C 24 20 4C 8B C5 48 8B CB E8 ?? ?? ?? ?? 48 8B 5C 24 40" }, { "function_start": true } ],
-      "fallbacks": [ [ { "pattern": "E8 ? ? ? ? 8B F8 85 FF 74 17" }, { "call": true } ] ],
+      "steps": [
+        {
+          "pattern": "E8 ? ? ? ? 8B F8 85 FF 74 17",
+          "unique": true
+        },
+        {
+          "call": true
+        }
+      ],
+      "fallbacks": [
+        [
+          {
+            "pattern": "48 81 C2 58 05 00 00 48 89 7C 24 20 4C 8B C5 48 8B CB E8 ?? ?? ?? ?? 48 8B 5C 24 40",
+            "unique": true
+          },
+          {
+            "function_start": true
+          }
+        ]
+      ],
       "verified": false,
-      "notes": "luaL_loadbuffer(L, buf, len, name). Primary: inner tail pattern + function start, Kamzik123 (MIT, Mafia III DE). Fallback: MartinJK M1DE (MIT, 2020 call site)."
+      "notes": "luaL_loadbuffer(L, buf, len, name). Primary: MartinJK M1DE (MIT) call site inside luaL_loadstring (loadbuffer(L, s, strlen(s), s)); on build 0x6092B6F8 it is unique and calls RVA 0x491CAB0, which is also MartinJK's 2020 address shifted by the same +0x3020 as PushCClosure. Fallback: Kamzik123 (MIT, Mafia III DE) tail pattern, only when unique: on 0x6092B6F8 it matches twice and the FIRST match (0x49124F0, next to pcall) is lua_load, whose 2nd argument is a reader FUNCTION; passing it a text buffer would crash the game."
     },
     "Lua.PushCClosure": {
       "kind": "function",
-      "steps": [ { "pattern": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 83 EC 40 49 63" } ],
-      "fallbacks": [ [ { "pattern": "E8 ? ? ? ? 48 8B 47 48 45 33 C9 ? ? C0" }, { "call": true } ] ],
+      "steps": [
+        {
+          "pattern": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 83 EC 40 49 63"
+        }
+      ],
+      "fallbacks": [
+        [
+          {
+            "pattern": "E8 ? ? ? ? 48 8B 47 48 45 33 C9 ? ? C0"
+          },
+          {
+            "call": true
+          }
+        ]
+      ],
       "verified": false,
       "notes": "hks_pushcclosure(L, fn, n, debugName, 0, 0). Kamzik123 (MIT, Mafia III DE); fallback MartinJK M1DE (MIT, 2020)."
     },
     "Lua.SetField": {
       "kind": "function",
-      "steps": [ { "pattern": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 48 8B D9 49 8B F8 48 8B 49 48 8B EA 48 8D 41 20 48 3B 43 58" } ],
-      "fallbacks": [ [ { "pattern": "E8 ? ? ? ? 8B D5 49 8B CF E8 ? ? ? ? 41 8B D6" }, { "call": true } ] ],
+      "steps": [
+        {
+          "pattern": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 48 8B D9 49 8B F8 48 8B 49 48 8B EA 48 8D 41 20 48 3B 43 58"
+        }
+      ],
+      "fallbacks": [
+        [
+          {
+            "pattern": "E8 ? ? ? ? 8B D5 49 8B CF E8 ? ? ? ? 41 8B D6"
+          },
+          {
+            "call": true
+          }
+        ]
+      ],
       "verified": false,
       "notes": "hksi_lua_setfield(L, idx, key). Kamzik123 (MIT, Mafia III DE); fallback MartinJK M1DE (MIT, 2020)."
     },
     "Lua.CheckLString": {
       "kind": "function",
-      "steps": [ { "pattern": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 49 8B D8 8B F2 48 8B F9 48 85 C9 75" } ],
+      "steps": [
+        {
+          "pattern": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 49 8B D8 8B F2 48 8B F9 48 85 C9 75"
+        }
+      ],
       "verified": false,
       "notes": "hksi_luaL_checklstring(L, idx, len). Kamzik123 (MIT, Mafia III DE)."
     },
     "Lua.ToLString": {
       "kind": "function",
-      "steps": [ { "pattern": "4C 8B C9 81 FA ? ? ? ? 7E 37" } ],
+      "steps": [
+        {
+          "pattern": "4C 8B C9 81 FA ? ? ? ? 7E 37"
+        }
+      ],
       "verified": false,
       "notes": "lua_tolstring(L, idx, len). MartinJK M1DE (MIT, 2020 Mafia DE). Used only to read error messages."
     },
-    "Lua.ApiTopOffset": { "kind": "constant", "value": "0x48", "verified": false, "notes": "ApiStack.top in lua_State; MartinJK gettop = (*(L+72) - *(L+80)) >> 4 (MIT)." },
-    "Lua.ApiBaseOffset": { "kind": "constant", "value": "0x50", "verified": false, "notes": "ApiStack.base in lua_State (MIT sources above)." },
-    "Lua.ObjectSize": { "kind": "constant", "value": "16", "verified": false, "notes": "HksObject size." },
-    "Lua.GlobalOffset": { "kind": "constant", "value": "0x10", "verified": false, "notes": "HksGlobal* in lua_State, right after the 16-byte chunk header (the CallStack then ends at 0x48 where ApiStack.top starts, matching the MIT offsets above). pcall mode uses it to accept every thread of the main VM." },
-    "Lua.PCallLock": { "kind": "constant", "value": "1", "verified": false, "notes": "Serialise worker-thread pcalls with our chunks (Kamzik123 approach, MIT)." }
+    "Lua.ApiTopOffset": {
+      "kind": "constant",
+      "value": "0x48",
+      "verified": false,
+      "notes": "ApiStack.top in lua_State; MartinJK gettop = (*(L+72) - *(L+80)) >> 4 (MIT)."
+    },
+    "Lua.ApiBaseOffset": {
+      "kind": "constant",
+      "value": "0x50",
+      "verified": false,
+      "notes": "ApiStack.base in lua_State (MIT sources above)."
+    },
+    "Lua.ObjectSize": {
+      "kind": "constant",
+      "value": "16",
+      "verified": false,
+      "notes": "HksObject size."
+    },
+    "Lua.GlobalOffset": {
+      "kind": "constant",
+      "value": "0x10",
+      "verified": false,
+      "notes": "HksGlobal* in lua_State, right after the 16-byte chunk header (the CallStack then ends at 0x48 where ApiStack.top starts, matching the MIT offsets above). pcall mode uses it to accept every thread of the main VM."
+    },
+    "Lua.PCallLock": {
+      "kind": "constant",
+      "value": "1",
+      "verified": false,
+      "notes": "Serialise worker-thread pcalls with our chunks (Kamzik123 approach, MIT)."
+    }
   },
   "cheats": []
 }

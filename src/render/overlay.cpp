@@ -477,6 +477,7 @@ void Frame(IDXGISwapChain* sc) {
   features::Registry::Get().Tick(dt);
   ui::AddressTableTick();
   script::Engine::Get().Tick(dt);
+  log::FlushIfStale();   // the game may exit without unloading us; keep the file current
 
   g.accSecond += dt;
   g.accGuard += dt;
