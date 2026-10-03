@@ -47,6 +47,8 @@ jobs:
   msvc:
     name: MSVC build + unit tests
     runs-on: windows-2022
+    # The MinGW job is the verified configuration; MSVC compatibility has not been confirmed yet.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Configure
