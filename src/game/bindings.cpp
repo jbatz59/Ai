@@ -478,7 +478,8 @@ class Resolver {
         }
         case Op::Pattern: {
           const mem::Module& m = mod();
-          const size_t want = s.unique ? 2 : static_cast<size_t>(s.n) + 1;
+          const size_t need = static_cast<size_t>(s.n) + 1;   // matches required for the index
+          const size_t want = s.unique ? 2 : need;             // unique: look for a second one too
           std::vector<uintptr_t> hits;
           std::string where;
           if (s.text2.empty()) {
@@ -493,7 +494,7 @@ class Resolver {
             hits = mem::FindAll(s.pattern, sec->start, sec->size, want);
             where = s.text2;
           }
-          if (hits.size() < want) {
+          if (hits.size() < need) {
             err = at + (hits.empty() ? std::string("no match") : "only " + std::to_string(hits.size()) + " match(es), index " + std::to_string(s.n) + " requested") +
                   " for '" + s.text + "' in " + where + " of " + m.name;
             return false;
