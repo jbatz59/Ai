@@ -183,7 +183,7 @@ return nil)",
                     if (std::find(favs_.begin(), favs_.end(), r.values[0]) == favs_.end()) favs_.push_back(r.values[0]);
                     nt::Push(nt::Kind::Success, "Remembered", r.values[0]);
                   },
-                  "=consigliere:weapon");
+                  "=chroma:weapon");
   }
   Runner runner_;
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);

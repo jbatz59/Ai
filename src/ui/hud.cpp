@@ -113,7 +113,7 @@ void DrawHud() {
       std::vector<Line> lines;
       // U+00B7 middle dot when the font has it (the embedded fallback font may not).
       const char* sep = bold->IsGlyphInFont(0x00B7) ? "  \xC2\xB7  " : "  |  ";
-      lines.push_back({"CONSIGLIERE" + std::string(sep) + st.menuKey.ToString(), th::U32(p.accent), bold, fs});
+      lines.push_back({"CHROMA" + std::string(sep) + st.menuKey.ToString(), th::U32(p.accent), bold, fs});
       auto& b = game::Bindings::Get();
       if (mp_guard::Blocked()) {
         lines.push_back({"Multiplayer detected - inactive", th::U32(p.danger), body, fs * 0.85f});

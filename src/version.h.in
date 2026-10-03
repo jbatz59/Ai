@@ -1,5 +1,5 @@
 #pragma once
-#define CG_NAME "Consigliere"
+#define CG_NAME "Chroma"
 #define CG_VERSION "@CG_VERSION_STRING@"
 #define CG_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
 #define CG_VERSION_MINOR @PROJECT_VERSION_MINOR@

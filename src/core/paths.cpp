@@ -56,7 +56,7 @@ void Compute(HMODULE self) {
     const std::wstring exePath = ModulePath(nullptr);
     if (!exePath.empty()) s.gameExe = std::filesystem::path(exePath);
     if (s.moduleDir.empty()) return;
-    s.dataDir = s.moduleDir / L"Consigliere";
+    s.dataDir = s.moduleDir / L"Chroma";
 
     std::error_code ec;
     std::filesystem::create_directories(s.dataDir, ec);

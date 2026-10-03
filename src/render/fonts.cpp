@@ -1,5 +1,7 @@
 #include "render/fonts.h"
 
+#include <inter_font.h>
+
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -84,6 +86,16 @@ ImFont* AddFirst(ImFontAtlas* atlas, const fs::path& dir, std::initializer_list<
   return nullptr;
 }
 
+// Inter: the minimalist UI typeface, embedded so the menu looks identical on every system.
+ImFont* AddInter(ImFontAtlas* atlas, float size, const char* name) {
+  ImFontConfig cfg;
+  cfg.OversampleH = 2;
+  cfg.OversampleV = 1;
+  cfg.SizePixels = size;
+  std::strncpy(cfg.Name, name, sizeof(cfg.Name) - 1);
+  return atlas->AddFontFromMemoryCompressedTTF(inter_compressed_data, static_cast<int>(inter_compressed_size), size, &cfg);
+}
+
 ImFont* AddEmbedded(ImFontAtlas* atlas, float size, const char* name) {
   ImFontConfig cfg;
   cfg.SizePixels = size;   // explicit reference size so icon fonts may still be merged into it
@@ -104,8 +116,9 @@ void Load(float scale, Fonts& out) {
   text.OversampleH = 2;
   text.OversampleV = 1;
 
-  std::wstring bodyFile;
-  out.body = AddFirst(atlas, dir, {L"segoeui.ttf"}, kBodySize, text, &bodyFile);
+  std::wstring bodyFile = L"Inter (embedded)";
+  out.body = AddInter(atlas, kBodySize, "Inter");
+  if (out.body == nullptr) out.body = AddFirst(atlas, dir, {L"segoeui.ttf"}, kBodySize, text, &bodyFile);
   if (out.body == nullptr) {
     out.body = AddEmbedded(atlas, kBodySize, "Embedded (body)");
     bodyFile = L"embedded";
@@ -130,11 +143,9 @@ void Load(float scale, Fonts& out) {
     }
   }
 
-  out.bold = AddFirst(atlas, dir, {L"seguisb.ttf", L"segoeuib.ttf"}, kBodySize, text);
-  if (out.bold == nullptr) out.bold = out.body;
-
-  out.title = AddFirst(atlas, dir, {L"seguisb.ttf", L"segoeuib.ttf"}, kTitleSize, text);
-  if (out.title == nullptr) out.title = out.bold;
+  // Minimalist: one typeface, hierarchy comes from size and spacing rather than heavy weights.
+  out.bold = out.body;
+  out.title = out.body;
 
   ImFontConfig mono;
   mono.OversampleH = 2;

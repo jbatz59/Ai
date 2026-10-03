@@ -1,5 +1,5 @@
-// ConsigliereInjector: loads Consigliere.dll into a running Mafia: Definitive Edition (single-player).
-//   ConsigliereInjector [--pid N | --process name.exe] [--dll path] [--wait] [--timeout seconds]
+// ChromaInjector: loads Chroma.dll into a running Mafia: Definitive Edition (single-player).
+//   ChromaInjector [--pid N | --process name.exe] [--dll path] [--wait] [--timeout seconds]
 // Exit codes: 0 ok, 1 usage, 2 process not found, 3 injection failed.
 #include <windows.h>
 #include <tlhelp32.h>
@@ -58,7 +58,7 @@ int wmain(int argc, wchar_t** argv) {
   wchar_t self[MAX_PATH * 2];
   GetModuleFileNameW(nullptr, self, static_cast<DWORD>(std::size(self)));
   std::wstring dll = self;
-  dll = dll.substr(0, dll.find_last_of(L"\\/") + 1) + L"Consigliere.dll";
+  dll = dll.substr(0, dll.find_last_of(L"\\/") + 1) + L"Chroma.dll";
 
   for (int i = 1; i < argc; ++i) {
     const std::wstring a = argv[i];
@@ -69,7 +69,7 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--wait") wait = true;
     else if (a == L"--timeout") { if (auto v = next()) timeoutMs = static_cast<DWORD>(_wtoi(v)) * 1000; }
     else {
-      fwprintf(stderr, L"usage: ConsigliereInjector [--pid N | --process name.exe] [--dll path] [--wait] [--timeout seconds]\n");
+      fwprintf(stderr, L"usage: ChromaInjector [--pid N | --process name.exe] [--dll path] [--wait] [--timeout seconds]\n");
       return 1;
     }
   }
@@ -80,7 +80,7 @@ int wmain(int argc, wchar_t** argv) {
     return 1;
   }
   dll = full;
-  wprintf(L"Consigliere injector - for single-player use only.\n");
+  wprintf(L"Chroma injector - for single-player use only.\n");
 
   if (!pid) {
     pid = FindProcess(processName);
@@ -103,12 +103,12 @@ int wmain(int argc, wchar_t** argv) {
   }
   BOOL wow64 = FALSE;
   if (IsWow64Process(process, &wow64) && wow64) {
-    fwprintf(stderr, L"Target is a 32-bit process; Consigliere is 64-bit only\n");
+    fwprintf(stderr, L"Target is a 32-bit process; Chroma is 64-bit only\n");
     CloseHandle(process);
     return 3;
   }
   if (AlreadyLoaded(process, dll)) {
-    wprintf(L"Consigliere is already loaded in process %lu\n", pid);
+    wprintf(L"Chroma is already loaded in process %lu\n", pid);
     CloseHandle(process);
     return 0;
   }

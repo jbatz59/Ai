@@ -1,6 +1,6 @@
 #pragma once
 // Bridge into the game's embedded Havok Script VM (HKS — a Lua 5.1 dialect). This is the PRIMARY
-// way Consigliere drives gameplay: the game's own script API (game.game:GetActivePlayer(),
+// way Chroma drives gameplay: the game's own script API (game.game:GetActivePlayer(),
 // player:SetDemigod(true), game.police:Disable(), game.gfx:SetWeatherSet(...), vehicle:Repair(true)…)
 // survives game patches far better than raw offsets. Only a handful of C entry points are
 // build-specific, and those come from bindings.
@@ -49,12 +49,12 @@ struct Result {
   double ms = 0;                            // execution time on the script thread
 };
 // Callbacks are always delivered on the RENDER thread (tasks::PostRender), so they may touch UI,
-// features and Consigliere's own Lua engine directly.
+// features and Chroma's own Lua engine directly.
 using Callback = std::function<void(const Result&)>;
 
 // Queues a chunk for the next script tick. Not ready => callback immediately with ok=false.
 // asExpression: try "return <code>" first (REPL style), fall back to running it as a statement.
-void Run(std::string code, Callback cb = {}, std::string chunkName = "=consigliere", bool asExpression = false);
+void Run(std::string code, Callback cb = {}, std::string chunkName = "=chroma", bool asExpression = false);
 
 // Lines printed by game scripts / our chunks (needs the C-closure bindings). Thread-safe, max 2000.
 std::vector<std::string> TakePrintedLines();

@@ -1,7 +1,7 @@
 #pragma once
 // Bindings = the only place game-version-specific knowledge lives. They are loaded from JSON
-// (Consigliere/bindings/*.json, merged in file-name order, later files override earlier ones;
-// user pins from the UI live in Consigliere/bindings/zz_user_overrides.json), so a game patch
+// (Chroma/bindings/*.json, merged in file-name order, later files override earlier ones;
+// user pins from the UI live in Chroma/bindings/zz_user_overrides.json), so a game patch
 // never requires recompiling — fix the JSON (or pin a symbol from the RE tools) and hit Reload.
 //
 // ---------------------------------------------------------------------------------------------

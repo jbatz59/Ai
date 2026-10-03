@@ -6,7 +6,7 @@
 //    key stays stuck when the menu closes. Covered paths: window messages, GetRawInputData,
 //    GetRawInputBuffer, GetAsyncKeyState/GetKeyState/GetKeyboardState, GetCursorPos/SetCursorPos,
 //    ClipCursor, XInputGetState and DirectInput8 GetDeviceState/GetDeviceData.
-//  - Calls made from inside Consigliere (ImGui backend, hotkeys) bypass the filters (detected by
+//  - Calls made from inside Chroma (ImGui backend, hotkeys) bypass the filters (detected by
 //    return address).
 //  - If the game only delivers raw input (RIDEV_NOLEGACY), ImGui events are synthesised from it.
 #include <windows.h>

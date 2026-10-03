@@ -1,5 +1,5 @@
 #pragma once
-// Thread-safe logger: file sink (Consigliere/consigliere.log) + in-memory ring for the UI console.
+// Thread-safe logger: file sink (Chroma/chroma.log) + in-memory ring for the UI console.
 #include <cstdint>
 #include <filesystem>
 #include <format>

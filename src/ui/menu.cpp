@@ -408,7 +408,7 @@ void DrawEmptyCategory(Page page) {
   PopFont();
   if (page == Page::CheatTable) {
     TextWrappedColored(p.textDim,
-                       "Cheat-table entries are declared in the \"cheats\" array of the binding files (Consigliere/bindings/*.json). "
+                       "Cheat-table entries are declared in the \"cheats\" array of the binding files (Chroma/bindings/*.json). "
                        "They appear here as soon as the bindings load - edit the JSON and use Reload bindings, no restart needed.");
   } else {
     TextWrappedColored(p.textDim,
@@ -880,9 +880,9 @@ void DrawSettingsPage() {
   SectionHeader("Hotkeys");
   const ShellSettings& st = Settings();
   if (BeginSettingsTable("##hotkeys")) {
-    HotkeyRow("Toggle menu", kCfgMenuKey, st.menuKey, false, "Opens and closes Consigliere. It cannot be unbound.");
+    HotkeyRow("Toggle menu", kCfgMenuKey, st.menuKey, false, "Opens and closes Chroma. It cannot be unbound.");
     HotkeyRow("Panic", kCfgPanicKey, st.panicKey, true, "Switches every feature off immediately.");
-    HotkeyRow("Unload Consigliere", kCfgUnloadKey, st.unloadKey, true, "Removes Consigliere from the game, restoring everything it changed.");
+    HotkeyRow("Unload Chroma", kCfgUnloadKey, st.unloadKey, true, "Removes Chroma from the game, restoring everything it changed.");
     ImGui::EndTable();
   }
   const Hotkey keys[] = {st.menuKey, st.panicKey, st.unloadKey};
@@ -894,7 +894,7 @@ void DrawSettingsPage() {
   // HUD.
   SectionHeader("In-game HUD");
   if (BeginSettingsTable("##hud")) {
-    ConfigToggleRow("Watermark", kCfgHudWatermark, st.hudWatermark, "Shows CONSIGLIERE and the menu key for a few seconds after loading and after closing the menu.");
+    ConfigToggleRow("Watermark", kCfgHudWatermark, st.hudWatermark, "Shows CHROMA and the menu key for a few seconds after loading and after closing the menu.");
     ConfigToggleRow("FPS counter", kCfgHudFps, st.hudFps);
     ConfigToggleRow("Active features list", kCfgHudActive, st.hudActive, "Lists the features that are switched on along the right edge.");
     ConfigToggleRow("Player position", kCfgHudPosition, st.hudPosition);
@@ -905,7 +905,7 @@ void DrawSettingsPage() {
   SectionHeader("Notifications & logging");
   if (BeginSettingsTable("##notify")) {
     ConfigToggleRow("Notifications", kCfgNotifications, st.notifications, "Toasts in the bottom-right corner. Warnings and errors are always shown.");
-    SettingsLabel("Log level", "Minimum severity written to consigliere.log and the Log console.");
+    SettingsLabel("Log level", "Minimum severity written to chroma.log and the Log console.");
     const int level = static_cast<int>(log::MinLevel());
     ImGui::SetNextItemWidth(220.0f * s);
     if (ImGui::BeginCombo("##loglevel", log::LevelName(log::MinLevel()))) {
@@ -1010,8 +1010,8 @@ void DrawSettingsPage() {
 
   SectionHeader("Danger zone");
   TextWrappedColored(p.textDim, "Unloading switches every feature off, restores every patched byte, removes all hooks and frees the DLL. "
-                                "The game keeps running exactly as it was before Consigliere arrived.");
-  if (DangerButton(IconLabel(CG_ICON_POWER, "Unload Consigliere").c_str())) RequestUnloadConfirmation();
+                                "The game keeps running exactly as it was before Chroma arrived.");
+  if (DangerButton(IconLabel(CG_ICON_POWER, "Unload Chroma").c_str())) RequestUnloadConfirmation();
 }
 
 void DrawAboutPage() {
@@ -1084,7 +1084,7 @@ void DrawAboutPage() {
   if (!g_menu.docsDir.empty()) {
     if (LinkButton("Open the documentation folder")) CmdOpenFolder(g_menu.docsDir);
   } else {
-    TextColored(p.textFaint, "The docs folder ships with the Consigliere source package.");
+    TextColored(p.textFaint, "The docs folder ships with the Chroma source package.");
   }
 
   SectionHeader("Build");
@@ -1143,7 +1143,7 @@ void DrawHeader(float height) {
   const float titleY = wp.y + (height - titleSize) * 0.5f;
   if (th::ChromaActive()) {
     // Per-letter rainbow wordmark that flows with the chroma cycle.
-    const char* word = "CONSIGLIERE";
+    const char* word = "CHROMA";
     float cx = x;
     for (int i = 0; word[i]; ++i) {
       const char glyph[2] = {word[i], '\0'};
@@ -1152,7 +1152,7 @@ void DrawHeader(float height) {
     }
     x = cx - titleSize * 0.16f;
   } else {
-    x += DrawTracked(dl, titleFont, titleSize, ImVec2(x, titleY), "CONSIGLIERE", 0.16f, Col(p.accent));
+    x += DrawTracked(dl, titleFont, titleSize, ImVec2(x, titleY), "CHROMA", 0.16f, Col(p.accent));
   }
   x += 10.0f * s;
   {
@@ -1298,7 +1298,7 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
   group("EXTEND");
   // Scripts page hidden: user Lua scripting is not part of this release.
   item(Page::Tools);
-  group("CONSIGLIERE");
+  group("CHROMA");
   item(Page::Settings);
   item(Page::About);
 
@@ -1328,14 +1328,14 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
 void DrawUnloadPopup() {
   const auto& p = th::Colors();
   if (g_menu.unloadRequested) {
-    ImGui::OpenPopup("Unload Consigliere?###cg.unload");
+    ImGui::OpenPopup("Unload Chroma?###cg.unload");
     g_menu.unloadRequested = false;
   }
   ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  if (ImGui::BeginPopupModal("Unload Consigliere?###cg.unload", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+  if (ImGui::BeginPopupModal("Unload Chroma?###cg.unload", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
     ImGui::TextUnformatted("Every feature is switched off, patches are restored and hooks removed. The game keeps running.");
-    TextColored(p.textDim, "Inject Consigliere again to bring it back.");
+    TextColored(p.textDim, "Inject Chroma again to bring it back.");
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
     if (DangerButton(IconLabel(CG_ICON_POWER, "Unload").c_str())) {
@@ -1407,7 +1407,7 @@ void DrawMainMenu() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
   const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                                  ImGuiWindowFlags_NoScrollWithMouse;
-  const bool visible = ImGui::Begin("Consigliere###cg.main", nullptr, flags);
+  const bool visible = ImGui::Begin("Chroma###cg.main", nullptr, flags);
   ImGui::PopStyleVar();
   if (visible) {
     const ImVec2 wp = ImGui::GetWindowPos();

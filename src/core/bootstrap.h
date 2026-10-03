@@ -4,10 +4,10 @@
 namespace cg {
 
 // Called from DllMain(DLL_PROCESS_ATTACH). Never blocks: spawns the init thread and returns.
-// Returns false if another Consigliere instance is already loaded in this process.
+// Returns false if another Chroma instance is already loaded in this process.
 bool Bootstrap(HMODULE self);
 
-// Ask Consigliere to unload itself (menu button / End hotkey). Safe from any thread. The unload
+// Ask Chroma to unload itself (menu button / End hotkey). Safe from any thread. The unload
 // thread disables features, restores patches, removes hooks, then FreeLibraryAndExitThread().
 void RequestUnload();
 bool IsUnloading();

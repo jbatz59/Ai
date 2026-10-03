@@ -9,6 +9,7 @@
 | nlohmann/json | 3.12.0 | MIT, Copyright (c) 2013-2026 Niels Lohmann |
 | Lua | 5.4.8 | MIT, Copyright (C) 1994-2025 Lua.org, PUC-Rio (vendored for future scripting; not active in this release) |
 | stb_image / stb_image_write | 2.30 / 1.16 | Public domain or MIT (dual), Sean Barrett |
+| Inter (font, embedded) | variable, google/fonts | SIL Open Font License 1.1, Copyright 2020 The Inter Project Authors |
 
 Full license texts are next to each library.
 

@@ -1,7 +1,7 @@
 // xinput1_4.dll proxy. Mafia: Definitive Edition imports xinput1_4.dll, so a copy of this file in the
 // game folder is loaded at startup. It forwards every export to the real System32 DLL and, from a
-// worker thread (never under the loader lock), loads Consigliere.dll from the same folder — but
-// only inside mafiadefinitiveedition.exe (or when CONSIGLIERE_ANY_PROCESS=1).
+// worker thread (never under the loader lock), loads Chroma.dll from the same folder — but
+// only inside mafiadefinitiveedition.exe (or when CHROMA_ANY_PROCESS=1).
 #include <windows.h>
 
 #include <cstdint>
@@ -37,8 +37,8 @@ std::wstring ModuleDir(HMODULE m) {
 }
 
 void LogLine(const std::wstring& dir, const char* text) {
-  CreateDirectoryW((dir + L"\\Consigliere").c_str(), nullptr);
-  HANDLE f = CreateFileW((dir + L"\\Consigliere\\loader.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+  CreateDirectoryW((dir + L"\\Chroma").c_str(), nullptr);
+  HANDLE f = CreateFileW((dir + L"\\Chroma\\loader.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
                          FILE_ATTRIBUTE_NORMAL, nullptr);
   if (f == INVALID_HANDLE_VALUE) return;
   DWORD written = 0;
@@ -55,22 +55,22 @@ DWORD WINAPI LoaderThread(LPVOID) {
   std::wstring exeName(exe, n);
   exeName = exeName.substr(exeName.find_last_of(L"\\/") + 1);
   wchar_t any[8] = {};
-  const bool anyProcess = GetEnvironmentVariableW(L"CONSIGLIERE_ANY_PROCESS", any, 8) && any[0] == L'1';
+  const bool anyProcess = GetEnvironmentVariableW(L"CHROMA_ANY_PROCESS", any, 8) && any[0] == L'1';
   if (!anyProcess && _wcsicmp(exeName.c_str(), L"mafiadefinitiveedition.exe") != 0) return 0;
 
-  for (const wchar_t* name : {L"\\Consigliere.dll", L"\\Consigliere.asi"}) {
+  for (const wchar_t* name : {L"\\Chroma.dll", L"\\Chroma.asi"}) {
     const std::wstring path = dir + name;
     if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
     if (LoadLibraryW(path.c_str())) {
-      LogLine(dir, "xinput1_4 proxy: Consigliere loaded");
+      LogLine(dir, "xinput1_4 proxy: Chroma loaded");
     } else {
       char msg[96];
-      snprintf(msg, sizeof(msg), "xinput1_4 proxy: LoadLibrary(Consigliere) failed, error %lu", GetLastError());
+      snprintf(msg, sizeof(msg), "xinput1_4 proxy: LoadLibrary(Chroma) failed, error %lu", GetLastError());
       LogLine(dir, msg);
     }
     return 0;
   }
-  LogLine(dir, "xinput1_4 proxy: Consigliere.dll not found next to the game exe");
+  LogLine(dir, "xinput1_4 proxy: Chroma.dll not found next to the game exe");
   return 0;
 }
 

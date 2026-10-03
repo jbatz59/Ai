@@ -262,7 +262,7 @@ void EnsurePrelude() {
           } catch (...) {
           }
         },
-        "=consigliere_prelude");
+        "=chroma_prelude");
   } catch (...) {
     g_preludeFor.store(0);
   }

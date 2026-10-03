@@ -135,7 +135,7 @@ void AppendLocked(State& s, Entry&& e, const std::string& line) {
 }
 
 void DebugOut(const std::string& line) {
-  std::string msg = "Consigliere ";
+  std::string msg = "Chroma ";
   msg += line;
   OutputDebugStringA(msg.c_str());
 }

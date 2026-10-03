@@ -14,12 +14,12 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "CompanyName", "Consigliere contributors"
-      VALUE "FileDescription", "Consigliere - single-player mod menu and RE toolkit for Mafia: Definitive Edition"
+      VALUE "CompanyName", "Chroma contributors"
+      VALUE "FileDescription", "Chroma - single-player mod menu and RE toolkit for Mafia: Definitive Edition"
       VALUE "FileVersion", CG_VERSION
-      VALUE "InternalName", "Consigliere"
-      VALUE "OriginalFilename", "Consigliere.dll"
-      VALUE "ProductName", "Consigliere"
+      VALUE "InternalName", "Chroma"
+      VALUE "OriginalFilename", "Chroma.dll"
+      VALUE "ProductName", "Chroma"
       VALUE "ProductVersion", CG_VERSION
     END
   END

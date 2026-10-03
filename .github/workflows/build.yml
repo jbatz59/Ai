@@ -30,15 +30,15 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1280x720x24 &
           sleep 2
-          cp build/Consigliere.dll build/tests/
+          cp build/Chroma.dll build/tests/
           DISPLAY=:99 timeout 300 wine build/tests/cg_testhost.exe --frames 240 --open-menu \
             --screenshot overlay.bmp --screenshot-frame 120 --unload-frame 200
-          test -s build/tests/Consigliere/consigliere.log && cat build/tests/Consigliere/consigliere.log
+          test -s build/tests/Chroma/chroma.log && cat build/tests/Chroma/chroma.log
       - uses: actions/upload-artifact@v4
         with:
-          name: consigliere-mingw
+          name: chroma-mingw
           path: |
-            build/Consigliere.dll
+            build/Chroma.dll
             build/loader/*.dll
             build/loader/*.exe
             build/tests/overlay.bmp
@@ -59,9 +59,9 @@ jobs:
         run: build/tests/Release/cg_tests.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: consigliere-msvc
+          name: chroma-msvc
           path: |
-            build/Release/Consigliere.dll
+            build/Release/Chroma.dll
             build/loader/Release/*.dll
             build/loader/Release/*.exe
           if-no-files-found: warn

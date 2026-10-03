@@ -90,7 +90,7 @@ bool ReadSwapChainVTable(DummyVTables& out) {
   WNDCLASSEXW wc{sizeof(wc)};
   wc.lpfnWndProc = DummyWndProc;
   wc.hInstance = GetModuleHandleW(nullptr);
-  wc.lpszClassName = L"ConsigliereDummyD3D11";
+  wc.lpszClassName = L"ChromaDummyD3D11";
   const ATOM atom = RegisterClassExW(&wc);
   if (!atom && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
     log::Error("render", "RegisterClassExW failed ({})", GetLastError());

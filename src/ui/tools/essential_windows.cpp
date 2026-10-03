@@ -122,7 +122,7 @@ class BindingsWindow final : public Window {
 
   void DrawCanonical() {
     const auto& c = render::theme::Colors();
-    ImGui::TextWrapped("Symbols Consigliere knows how to use. Missing ones only disable the features that need them. "
+    ImGui::TextWrapped("Symbols Chroma knows how to use. Missing ones only disable the features that need them. "
                        "See docs/BINDINGS.md for how to find each one on your build.");
     if (!ImGui::BeginTable("##canon", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
                            ImVec2(0, ImGui::GetContentRegionAvail().y)))

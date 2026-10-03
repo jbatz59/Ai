@@ -1,9 +1,9 @@
-# Consigliere
+# Chroma
 
 A single-player mod menu and reverse-engineering toolkit for **Mafia: Definitive Edition** (PC, x64, DirectX 11).
 It runs as a DLL inside the game and draws a Dear ImGui menu on top of it.
 
-> **Status — read this first.** Consigliere is built and tested in an automated stand-in "game" (a D3D11
+> **Status — read this first.** Chroma is built and tested in an automated stand-in "game" (a D3D11
 > test host under Wine). It has **not** been run against the real game by its authors. Everything
 > game-specific (where the game's script engine lives in memory, which patterns match) is loaded from
 > `bindings/*.json` and is **unverified** for current game builds. Features whose bindings don't resolve are
@@ -31,14 +31,14 @@ browser, bindings status, log console, and a console that runs code inside the g
 
 **Menu**: noir theme, command palette (Ctrl+P), per-feature hotkeys, favourites, profiles, toasts,
 gamepad navigation, panic key, clean unload. Multiplayer guard: if a multiplayer client (MafiaMP) is
-detected, Consigliere refuses to modify anything.
+detected, Chroma refuses to modify anything.
 
 There is no money cheat: Mafia: DE has no money system.
 
 ## Install (short)
 
-1. Build (below) or take `Consigliere.dll` and `xinput1_4.dll` from a release.
-2. Copy both next to `mafiadefinitiveedition.exe`. The game loads `xinput1_4.dll`, which loads Consigliere.
+1. Build (below) or take `Chroma.dll` and `xinput1_4.dll` from a release.
+2. Copy both next to `mafiadefinitiveedition.exe`. The game loads `xinput1_4.dll`, which loads Chroma.
 3. Start the game and press **Insert**.
 
 Alternatives (Ultimate ASI Loader, the injector) and conflicts with ReShade / other mods:
@@ -63,7 +63,7 @@ cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake
 cmake --build build
 ```
 
-Outputs: `Consigliere.dll`, `loader/xinput1_4.dll`, `loader/ConsigliereInjector.exe`, `tests/cg_tests.exe`,
+Outputs: `Chroma.dll`, `loader/xinput1_4.dll`, `loader/ChromaInjector.exe`, `tests/cg_tests.exe`,
 `tests/cg_testhost.exe`.
 
 ## Docs

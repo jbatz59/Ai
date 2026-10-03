@@ -43,7 +43,7 @@ constexpr DWORD kUnloadWaitMs = 2000;
 constexpr char kPrintMarker = '\x01';   // __cg_emit("\1...") => print ring instead of the collector
 
 constexpr const char* kProbeChunk =
-    "if not (game ~= nil and game.game ~= nil) then error('consigliere: game not ready', 0) end";
+    "if not (game ~= nil and game.game ~= nil) then error('chroma: game not ready', 0) end";
 
 // Wraps the global print once per VM generation; keeps the original and forwards to it.
 constexpr const char* kPrintWrapChunk =
@@ -270,7 +270,7 @@ std::string Wrap(std::string_view body) {
 void RunJob(const Api& a, uintptr_t L, Job& job, bool wrap) {
   Result r;
   const auto t0 = std::chrono::steady_clock::now();
-  const char* name = job.name.empty() ? "=consigliere" : job.name.c_str();
+  const char* name = job.name.empty() ? "=chroma" : job.name.c_str();
   std::string error;
   Phase ph = Phase::Compile;
   if (job.asExpression) {

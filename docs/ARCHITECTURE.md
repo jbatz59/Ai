@@ -1,18 +1,18 @@
 # Architecture
 
-Consigliere is a DLL that lives inside `mafiadefinitiveedition.exe`. It draws a Dear ImGui menu on
+Chroma is a DLL that lives inside `mafiadefinitiveedition.exe`. It draws a Dear ImGui menu on
 top of the game's Direct3D 11 swap chain and talks to game memory through a **bindings** layer
 that is loaded from JSON at runtime.
 
 ```
-loader/        version.dll / dinput8.dll proxies + ConsigliereInjector.exe  -> load Consigliere.dll
+loader/        xinput1_4.dll proxy + ChromaInjector.exe  -> load Chroma.dll
 src/core/      bootstrap, logging, config, hotkeys, task queues, crash reports, multiplayer guard
 src/mem/       safe memory access, patterns, RTTI, hooks, patches, HW breakpoints, scanner, disasm
 src/render/    D3D11 Present hook, ImGui overlay, input capture, theme, fonts, world drawing
 src/game/      bindings (JSON -> addresses), typed game facade, bridge into the game's Lua VM
 src/features/  Feature model + registry, built-in features, data-driven cheat table
 src/ui/        menu shell, pages, HUD, command palette, toasts, RE toolkit windows (ui/tools)
-src/script/    embedded Lua 5.4 for user scripts (Consigliere/scripts/*.lua)
+src/script/    user-script engine (stubbed in this release; Lua 5.4 vendored for later)
 bindings/      shipped binding files (game-version specific knowledge lives ONLY here)
 ```
 

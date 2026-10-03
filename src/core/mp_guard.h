@@ -1,5 +1,5 @@
 #pragma once
-// Consigliere is single-player only. If a multiplayer client (MafiaHub/MafiaMP or any module we
+// Chroma is single-player only. If a multiplayer client (MafiaHub/MafiaMP or any module we
 // flag) is present in the process, every gameplay feature, patch and script memory write is refused.
 #include <string>
 

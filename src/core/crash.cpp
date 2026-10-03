@@ -501,14 +501,14 @@ bool WriteReport() {
 
     std::string text;
     text.reserve(16 * 1024);
-    text += "Consigliere crash report\r\n========================\r\n";
+    text += "Chroma crash report\r\n========================\r\n";
     text += std::format("Version:    {} {}\r\n", CG_NAME, CG_VERSION);
     text += std::format("Time:       {}\r\n", LocalTimestamp(st));
     text += std::format("Process:    {} (pid {})\r\n", util::Narrow(paths::GameExe().wstring()), GetCurrentProcessId());
     text += std::format("Thread:     {}\r\n", r.threadId);
-    text += std::format("Consigliere: base 0x{:016X}, size 0x{:X}\r\n", g_selfBase, g_selfEnd - g_selfBase);
+    text += std::format("Chroma: base 0x{:016X}, size 0x{:X}\r\n", g_selfBase, g_selfEnd - g_selfBase);
     text += r.unhandled ? "Kind:       unhandled exception (the process is terminating)\r\n"
-                        : "Kind:       first-chance exception inside Consigliere code\r\n";
+                        : "Kind:       first-chance exception inside Chroma code\r\n";
     text += "\r\n";
     text += std::format("Exception:  0x{:08X} {}{}\r\n", static_cast<uint32_t>(rec.ExceptionCode),
                         ExceptionName(rec.ExceptionCode), ExceptionDetail(rec));
@@ -587,7 +587,7 @@ DWORD WINAPI ReporterMain(LPVOID) {
   using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
   if (const auto setDesc = reinterpret_cast<SetThreadDescriptionFn>(
           reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription"))))
-    setDesc(GetCurrentThread(), L"Consigliere crash reporter");
+    setDesc(GetCurrentThread(), L"Chroma crash reporter");
   const HANDLE waits[2] = {g_requestEvent, g_quitEvent};
   for (;;) {
     if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) return 0;

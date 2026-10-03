@@ -1,7 +1,7 @@
 # Bindings
 
-Bindings are the only place game-build-specific knowledge lives. Consigliere loads every
-`Consigliere\bindings\*.json` in name order; later files override earlier symbols, and
+Bindings are the only place game-build-specific knowledge lives. Chroma loads every
+`Chroma\bindings\*.json` in name order; later files override earlier symbols, and
 `zz_user_overrides.json` holds what you pin from the UI. **Tools → Game Bindings** shows each symbol's
 status, value and error, and has a **Reload** button. You never need to recompile.
 
@@ -31,7 +31,7 @@ Kinds: `address`, `pointer` (re-evaluated each use after the first `deref`), `fu
 
 ## The script VM (most gameplay features)
 
-Mafia: DE runs Havok Script (a Lua 5.1 dialect). Consigliere hooks the script machine's tick and runs
+Mafia: DE runs Havok Script (a Lua 5.1 dialect). Chroma hooks the script machine's tick and runs
 its Lua there, on the game's own script thread.
 
 | Symbol | Kind | Signature / value |

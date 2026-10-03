@@ -515,7 +515,7 @@ void Uninstall() {
   } else {
     // Something subclassed the window after us and will keep calling our WndProc.
     g_wndProcRestoreFailed = true;
-    log::Warn("input", "WndProc was re-subclassed by another module; Consigliere will stay resident after unload");
+    log::Warn("input", "WndProc was re-subclassed by another module; Chroma will stay resident after unload");
   }
   for (int i = 0; i < 400 && g_inside.load() > 0; ++i) Sleep(5);
   {

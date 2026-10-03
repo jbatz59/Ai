@@ -1,5 +1,5 @@
 #pragma once
-// Consigliere's own Lua 5.4 runtime for user scripts in Consigliere/scripts/*.lua.
+// Chroma's own Lua 5.4 runtime for user scripts in Chroma/scripts/*.lua.
 // Each script gets its own environment table (globals isolated) on one shared lua_State that is
 // only ever touched from the render thread. API surface (documented in docs/SCRIPTING.md):
 //   cg.*      log, notify, version, time, frame, menu_open, on(event, fn), unload_script

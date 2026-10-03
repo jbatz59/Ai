@@ -1,5 +1,5 @@
 #pragma once
-// Crash-proof memory access. Every gameplay read/write in Consigliere goes through here.
+// Crash-proof memory access. Every gameplay read/write in Chroma goes through here.
 // Validation uses VirtualQuery with a small per-thread region cache, so hot paths stay cheap.
 #include <cstdint>
 #include <cstring>

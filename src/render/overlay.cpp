@@ -64,7 +64,7 @@ struct State {
 
   std::wstring screenshotPath;
   uint64_t screenshotFrame = 0;
-  uint64_t unloadFrame = 0;   // test hook: CONSIGLIERE_TEST_UNLOAD_FRAME
+  uint64_t unloadFrame = 0;   // test hook: CHROMA_TEST_UNLOAD_FRAME
   bool captureThisFrame = false;
   bool hideMenuThisFrame = false;
 };
@@ -227,19 +227,19 @@ bool InitFor(IDXGISwapChain* sc) {
   QueryPerformanceCounter(&g.last);
   RefreshHotkeys(true);
 
-  g.screenshotPath = EnvW(L"CONSIGLIERE_TEST_SCREENSHOT");
+  g.screenshotPath = EnvW(L"CHROMA_TEST_SCREENSHOT");
   if (!g.screenshotPath.empty()) {
-    const auto frame = util::ParseUInt(util::Narrow(EnvW(L"CONSIGLIERE_TEST_SCREENSHOT_FRAME")));
+    const auto frame = util::ParseUInt(util::Narrow(EnvW(L"CHROMA_TEST_SCREENSHOT_FRAME")));
     g.screenshotFrame = frame.value_or(90);
   }
-  g.unloadFrame = util::ParseUInt(util::Narrow(EnvW(L"CONSIGLIERE_TEST_UNLOAD_FRAME"))).value_or(0);
+  g.unloadFrame = util::ParseUInt(util::Narrow(EnvW(L"CHROMA_TEST_UNLOAD_FRAME"))).value_or(0);
 
   g_initialized.store(true);
   ui::Init();
   script::Engine::Get().Init();
 
-  if (EnvW(L"CONSIGLIERE_TEST_OPEN_MENU") == L"1") SetMenuOpen(true);
-  ui::notify::Push(ui::notify::Kind::Success, "Consigliere loaded", "Press " + g.menuKey.ToString() + " to open the menu");
+  if (EnvW(L"CHROMA_TEST_OPEN_MENU") == L"1") SetMenuOpen(true);
+  ui::notify::Push(ui::notify::Kind::Success, "Chroma loaded", "Press " + g.menuKey.ToString() + " to open the menu");
   log::Info("render", "Overlay initialised on HWND {} (scale {:.2f})", static_cast<void*>(desc.OutputWindow), scale);
   return true;
 }

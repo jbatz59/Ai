@@ -122,7 +122,7 @@ Pool& P() {
 
 void WorkerMain(Pool* pool, int index) {
   try {
-    NameCurrentThread((L"Consigliere worker " + std::to_wstring(index)).c_str());
+    NameCurrentThread((L"Chroma worker " + std::to_wstring(index)).c_str());
   } catch (...) {
   }
   for (;;) {

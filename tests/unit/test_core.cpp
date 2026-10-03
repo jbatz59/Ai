@@ -442,7 +442,7 @@ CG_TEST(core_log_copy_and_generation) {
 
 CG_TEST(core_log_file_sink) {
   const auto dir = MakeTempDir("log");
-  const auto file = dir / L"consigliere.log";
+  const auto file = dir / L"chroma.log";
   const log::Level oldLevel = log::MinLevel();
   log::SetMinLevel(log::Level::Info);
   log::Info("test", "before init");

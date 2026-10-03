@@ -109,7 +109,7 @@ bool WaitForGameWindow() {
 
 DWORD WINAPI InitThread(LPVOID) {
   paths::Init(g_self);
-  log::Init(paths::Data(L"consigliere.log"));
+  log::Init(paths::Data(L"chroma.log"));
   log::Info("core", "{} {} starting (host: {})", CG_NAME, CG_VERSION, util::Narrow(paths::GameExe().filename().wstring()));
   crash::Install();
   LogEnvironmentFingerprint();
@@ -119,7 +119,7 @@ DWORD WINAPI InitThread(LPVOID) {
   mp_guard::Refresh();
   if (mp_guard::Blocked()) {
     g_status.store("Blocked: multiplayer");
-    log::Error("core", "Multiplayer client detected ({}). Consigliere is single-player only and will stay inactive.",
+    log::Error("core", "Multiplayer client detected ({}). Chroma is single-player only and will stay inactive.",
                mp_guard::Reason());
     return 0;
   }
@@ -178,7 +178,7 @@ DWORD WINAPI UnloadThread(LPVOID) {
 bool Bootstrap(HMODULE self) {
   g_self = self;
   // One instance per process (e.g. both an ASI loader and the version.dll proxy present).
-  const std::wstring name = L"Local\\Consigliere." + std::to_wstring(GetCurrentProcessId());
+  const std::wstring name = L"Local\\Chroma." + std::to_wstring(GetCurrentProcessId());
   g_instanceMutex = CreateMutexW(nullptr, FALSE, name.c_str());
   if (g_instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
     CloseHandle(g_instanceMutex);

@@ -53,7 +53,7 @@ std::string_view CgPrelude();
 // What RunFeatureChunk queues: `code` prefixed (on its first line, so error line numbers stay
 // unchanged) with a guard that raises kCgPreludeMissingMarker when CG is absent or outdated.
 std::string GuardedChunk(std::string_view code);
-inline constexpr std::string_view kCgPreludeMissingMarker = "consigliere: CG prelude missing";
+inline constexpr std::string_view kCgPreludeMissingMarker = "chroma: CG prelude missing";
 
 // Queues the prelude unless it was already queued for the current game::vm::Generation().
 // Render thread. Not needed before RunFeatureChunk (which calls it); useful for consoles.

@@ -1,10 +1,10 @@
-// Consigliere test host: a stand-in "game" for end-to-end tests without Mafia: Definitive Edition.
+// Chroma test host: a stand-in "game" for end-to-end tests without Mafia: Definitive Edition.
 //
 //  * creates a D3D11 window + swap chain and presents ~60 fps
 //  * plants a fake player/world in .data behind a unique byte marker and writes a bindings file
 //    describing it (so bindings -> features -> UI run for real)
-//  * loads Consigliere.dll (overlay hooks Present like in the game)
-//  * optional: screenshot via CONSIGLIERE_TEST_SCREENSHOT, unload via CONSIGLIERE_TEST_UNLOAD_FRAME
+//  * loads Chroma.dll (overlay hooks Present like in the game)
+//  * optional: screenshot via CHROMA_TEST_SCREENSHOT, unload via CHROMA_TEST_UNLOAD_FRAME
 //
 // Usage: cg_testhost.exe [--frames N] [--dll path] [--screenshot out.bmp] [--screenshot-frame N]
 //                        [--open-menu] [--unload-frame N] [--config file.json]
@@ -44,7 +44,7 @@ static volatile Anchor g_anchor = {"CGHOST_ANCHOR_1", &g_player, 12.0f, 1.0f};
 
 static const char* kBindings = R"json({
   "schema": 1,
-  "game_build": "Consigliere test host",
+  "game_build": "Chroma test host",
   "symbols": {
     "Host.Anchor":     { "kind": "address", "steps": [ { "pattern": "43 47 48 4F 53 54 5F 41 4E 43 48 4F 52 5F 31 00", "section": "any" } ], "verified": true, "notes": "test host marker" },
     "Player.Object":   { "kind": "pointer", "steps": [ { "symbol": "Host.Anchor" }, { "add": "0x10" }, { "deref": true } ], "verified": true },
@@ -78,22 +78,22 @@ int wmain(int argc, wchar_t** argv) {
     GetModuleFileNameW(nullptr, buf, MAX_PATH);
     return fs::path(buf).parent_path();
   }();
-  fs::path dll = exeDir / L"Consigliere.dll";
+  fs::path dll = exeDir / L"Chroma.dll";
   fs::path configFile;
   for (int i = 1; i < argc; ++i) {
     std::wstring a = argv[i];
     auto next = [&]() -> std::wstring { return i + 1 < argc ? argv[++i] : L""; };
     if (a == L"--frames") frames = _wtoi(next().c_str());
     else if (a == L"--dll") dll = next();
-    else if (a == L"--screenshot") SetEnvironmentVariableW(L"CONSIGLIERE_TEST_SCREENSHOT", next().c_str());
-    else if (a == L"--screenshot-frame") SetEnvironmentVariableW(L"CONSIGLIERE_TEST_SCREENSHOT_FRAME", next().c_str());
-    else if (a == L"--open-menu") SetEnvironmentVariableW(L"CONSIGLIERE_TEST_OPEN_MENU", L"1");
-    else if (a == L"--unload-frame") SetEnvironmentVariableW(L"CONSIGLIERE_TEST_UNLOAD_FRAME", next().c_str());
+    else if (a == L"--screenshot") SetEnvironmentVariableW(L"CHROMA_TEST_SCREENSHOT", next().c_str());
+    else if (a == L"--screenshot-frame") SetEnvironmentVariableW(L"CHROMA_TEST_SCREENSHOT_FRAME", next().c_str());
+    else if (a == L"--open-menu") SetEnvironmentVariableW(L"CHROMA_TEST_OPEN_MENU", L"1");
+    else if (a == L"--unload-frame") SetEnvironmentVariableW(L"CHROMA_TEST_UNLOAD_FRAME", next().c_str());
     else if (a == L"--config") configFile = next();
   }
 
-  // Data folder lives next to the DLL: <dll dir>/Consigliere/
-  const fs::path dataDir = fs::absolute(dll).parent_path() / L"Consigliere";
+  // Data folder lives next to the DLL: <dll dir>/Chroma/
+  const fs::path dataDir = fs::absolute(dll).parent_path() / L"Chroma";
   std::error_code ec;
   fs::create_directories(dataDir / L"bindings", ec);
   std::ofstream(dataDir / L"bindings" / L"test_host.json", std::ios::binary) << kBindings;
@@ -103,11 +103,11 @@ int wmain(int argc, wchar_t** argv) {
   wc.lpfnWndProc = WndProc;
   wc.hInstance = GetModuleHandleW(nullptr);
   wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
-  wc.lpszClassName = L"ConsigliereTestHost";
+  wc.lpszClassName = L"ChromaTestHost";
   RegisterClassExW(&wc);
   RECT rc{0, 0, 1280, 720};
   AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-  HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Consigliere Test Host", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0,
+  HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Chroma Test Host", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0,
                               rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, wc.hInstance, nullptr);
   ShowWindow(hwnd, SW_SHOW);
   SetForegroundWindow(hwnd);
@@ -162,7 +162,7 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   const bool stillLoaded = GetModuleHandleW(dllName.c_str()) != nullptr;
-  std::printf("host: frames done; consigliere_loaded=%d health=%.2f time=%.2f\n", stillLoaded ? 1 : 0, g_player.health,
+  std::printf("host: frames done; chroma_loaded=%d health=%.2f time=%.2f\n", stillLoaded ? 1 : 0, g_player.health,
               g_anchor.timeOfDay);
   rtv->Release();
   ctx->Release();

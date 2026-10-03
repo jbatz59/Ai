@@ -54,18 +54,18 @@ struct CommandInfo {
 };
 
 constexpr CommandInfo kCommands[] = {
-    {Command::ReloadBindings, "Reload bindings", "Re-read Consigliere/bindings/*.json and resolve every symbol", CG_ICON_REFRESH},
+    {Command::ReloadBindings, "Reload bindings", "Re-read Chroma/bindings/*.json and resolve every symbol", CG_ICON_REFRESH},
     {Command::ReloadScripts, "Reload scripts", "Reload every Lua script", CG_ICON_REFRESH},
     {Command::DisableAll, "Disable all features", "Panic: switch everything off", CG_ICON_POWER},
     {Command::SaveConfig, "Save config", "Write the configuration to disk now", CG_ICON_SAVE},
-    {Command::OpenDataFolder, "Open data folder", "Show the Consigliere folder in Explorer", CG_ICON_FOLDER},
+    {Command::OpenDataFolder, "Open data folder", "Show the Chroma folder in Explorer", CG_ICON_FOLDER},
     {Command::OpenScriptsFolder, "Open scripts folder", "Show the scripts folder in Explorer", CG_ICON_FOLDER},
-    {Command::CloseMenu, "Close menu", "Hide Consigliere", CG_ICON_CLOSE},
+    {Command::CloseMenu, "Close menu", "Hide Chroma", CG_ICON_CLOSE},
     {Command::ThemeNoir, "Theme: Noir", "Charcoal and brass", CG_ICON_SETTINGS},
     {Command::ThemeMidnight, "Theme: Midnight", "Blue-black and steel", CG_ICON_SETTINGS},
     {Command::ThemeBordeaux, "Theme: Bordeaux", "Deep wine and gold", CG_ICON_SETTINGS},
     {Command::ThemeLight, "Theme: Light", "Parchment and ink", CG_ICON_SETTINGS},
-    {Command::Unload, "Unload Consigliere", "Restore the game and remove Consigliere", CG_ICON_POWER},
+    {Command::Unload, "Unload Chroma", "Restore the game and remove Chroma", CG_ICON_POWER},
 };
 
 struct Entry {
