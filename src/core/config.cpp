@@ -250,16 +250,20 @@ bool Config::Load(const std::filesystem::path& file) {
 
     const std::filesystem::path backup = WithSuffix(file, L".bak");
     const bool backedUp = CopyFileW(file.c_str(), backup.c_str(), FALSE) != 0;
+    const DWORD copyError = backedUp ? 0 : GetLastError();
     const char* why = rr == ReadResult::TooLarge ? "too large" : rr == ReadResult::Failed ? "unreadable" : "not valid JSON";
     if (backedUp)
       log::Warn("config", "settings file '{}' is {}; backed up to '{}' and starting with defaults", PathUtf8(file), why,
                 PathUtf8(backup));
     else
-      log::Warn("config", "settings file '{}' is {} and could not be backed up (error {}); starting with defaults",
-                PathUtf8(file), why, GetLastError());
+      log::Warn("config",
+                "settings file '{}' is {} and could not be backed up (error {}); using defaults without saving "
+                "this session so the file is not overwritten",
+                PathUtf8(file), why, copyError);
     std::lock_guard lock(mutex_);
     root_ = json::object();
     dirty_ = false;
+    if (!backedUp) file_.clear();
     return false;
   } catch (const std::exception& e) {
     log::Error("config", "Load failed: {}", e.what());
@@ -532,7 +536,8 @@ bool Config::DeleteProfile(const std::string& name) {
     if (clean.empty()) return false;
     std::lock_guard io(IoMutex());
     if (!DeleteFileW(ProfileFile(clean).c_str())) {
-      log::Warn("config", "could not delete profile '{}' (error {})", clean, GetLastError());
+      const DWORD err = GetLastError();
+      log::Warn("config", "could not delete profile '{}' (error {})", clean, err);
       return false;
     }
     log::Info("config", "deleted profile '{}'", clean);
