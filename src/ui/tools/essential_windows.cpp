@@ -11,6 +11,7 @@
 #include "core/tasks.h"
 #include "core/util.h"
 #include "game/bindings.h"
+#include "game/diagnostics.h"
 #include "game/game.h"
 #include "game/script_vm.h"
 #include "render/theme.h"
@@ -31,6 +32,23 @@ ImVec4 StatusColor(game::SymbolStatus s) {
   }
 }
 
+void DiagnosticsButton() {
+  if (game::diagnostics::Running()) {
+    ImGui::BeginDisabled();
+    ImGui::Button("Writing report...");
+    ImGui::EndDisabled();
+    return;
+  }
+  if (ImGui::Button("Create diagnostics report")) {
+    game::diagnostics::WriteReportAsync([](bool ok, std::wstring path) {
+      if (ok) notify::Push(notify::Kind::Success, "Diagnostics report saved", util::Narrow(path), 8.0f);
+      else notify::Push(notify::Kind::Error, "Diagnostics report failed", "See the log for details");
+    });
+  }
+  ImGui::SetItemTooltip("Writes Chroma\\diagnostics.txt: your game build and why bindings did or did not match.\n"
+                        "Send it to whoever maintains your bindings. Nothing is uploaded automatically.");
+}
+
 // ---------------------------------------------------------------------------------------------
 class BindingsWindow final : public Window {
  public:
@@ -47,6 +65,8 @@ class BindingsWindow final : public Window {
     } else if (ImGui::Button("Reload bindings")) {
       tasks::RunAsync([] { game::Bindings::Get().Reload(); });
     }
+    ImGui::SameLine();
+    DiagnosticsButton();
     ImGui::SameLine();
     ImGui::TextColored(c.textDim, "Build: %s | Script VM: %s", b.GameBuild().empty() ? "?" : b.GameBuild().c_str(),
                        game::vm::StatusText());
@@ -240,6 +260,7 @@ class GameLuaWindow final : public Window {
         std::string m = "Missing bindings:";
         for (const auto& s : missing) m += " " + s;
         ImGui::TextWrapped("%s", m.c_str());
+        DiagnosticsButton();
       }
     }
     const float inputH = ImGui::GetTextLineHeightWithSpacing() * 4;

@@ -47,6 +47,16 @@ std::atomic<bool> g_blockAll{true};   // "input.block_all", refreshed by SetImGu
 std::atomic<int> g_inside{0};
 std::atomic<uint64_t> g_lastLegacyKeyMs{0}, g_lastLegacyMouseMs{0};
 
+// Which input paths the game actually uses (game callers only). Logged when the menu closes so a
+// user's log tells us exactly how this build reads the mouse and keyboard.
+struct InputStats {
+  std::atomic<uint64_t> rawData{0}, rawBuffer{0}, diState{0}, diData{0}, xinput{0}, wmInput{0}, legacyMouse{0}, legacyKey{0},
+      setCursorPos{0}, clipCursor{0}, getCursorPos{0}, asyncKey{0};
+};
+InputStats g_stats;
+bool g_diHooked = false;
+int g_captureSessions = 0;
+
 std::mutex g_clipMutex;
 bool g_gameClipActive = false;
 RECT g_gameClipRect{};
@@ -197,7 +207,9 @@ void SynthesizeFromRaw(const RAWINPUT* ri) {
 UINT WINAPI HkGetRawInputData(HRAWINPUT h, UINT cmd, LPVOID data, PUINT size, UINT headerSize) {
   InsideGuard guard;
   const UINT r = o_GetRawInputData(h, cmd, data, size, headerSize);
-  if (FromUs(CG_RETURN_ADDRESS()) || !g_captured.load()) return r;
+  if (FromUs(CG_RETURN_ADDRESS())) return r;
+  g_stats.rawData.fetch_add(1, std::memory_order_relaxed);
+  if (!g_captured.load()) return r;
   if (cmd == RID_INPUT && data && r != static_cast<UINT>(-1) && r >= sizeof(RAWINPUTHEADER)) {
     FilterRawForGame(static_cast<RAWINPUT*>(data));
   }
@@ -208,6 +220,7 @@ UINT WINAPI HkGetRawInputBuffer(PRAWINPUT data, PUINT size, UINT headerSize) {
   InsideGuard guard;
   const UINT count = o_GetRawInputBuffer(data, size, headerSize);
   if (FromUs(CG_RETURN_ADDRESS()) || !data || count == 0 || count == static_cast<UINT>(-1)) return count;
+  g_stats.rawBuffer.fetch_add(1, std::memory_order_relaxed);
   // Buffered reads drain WM_INPUT, so this is the only place we can see these events.
   RAWINPUT* ri = data;
   for (UINT i = 0; i < count; ++i) {
@@ -225,6 +238,7 @@ UINT WINAPI HkGetRawInputBuffer(PRAWINPUT data, PUINT size, UINT headerSize) {
 BOOL WINAPI HkClipCursor(const RECT* rect) {
   InsideGuard guard;
   if (FromUs(CG_RETURN_ADDRESS())) return o_ClipCursor(rect);
+  g_stats.clipCursor.fetch_add(1, std::memory_order_relaxed);
   {
     std::lock_guard lock(g_clipMutex);
     g_gameClipActive = rect != nullptr;
@@ -239,13 +253,17 @@ BOOL WINAPI HkClipCursor(const RECT* rect) {
 
 BOOL WINAPI HkSetCursorPos(int x, int y) {
   InsideGuard guard;
-  if (!FromUs(CG_RETURN_ADDRESS()) && g_captured.load()) return TRUE;
+  const bool game = !FromUs(CG_RETURN_ADDRESS());
+  if (game) g_stats.setCursorPos.fetch_add(1, std::memory_order_relaxed);
+  if (game && g_captured.load()) return TRUE;
   return o_SetCursorPos(x, y);
 }
 
 BOOL WINAPI HkGetCursorPos(LPPOINT p) {
   InsideGuard guard;
-  if (!FromUs(CG_RETURN_ADDRESS()) && BlockMouseNow() && p) {
+  const bool game = !FromUs(CG_RETURN_ADDRESS());
+  if (game) g_stats.getCursorPos.fetch_add(1, std::memory_order_relaxed);
+  if (game && BlockMouseNow() && p) {
     *p = g_frozenCursor;
     return TRUE;
   }
@@ -254,7 +272,9 @@ BOOL WINAPI HkGetCursorPos(LPPOINT p) {
 
 SHORT WINAPI HkGetAsyncKeyState(int vk) {
   InsideGuard guard;
-  if (!FromUs(CG_RETURN_ADDRESS()) && g_captured.load()) {
+  const bool game = !FromUs(CG_RETURN_ADDRESS());
+  if (game) g_stats.asyncKey.fetch_add(1, std::memory_order_relaxed);
+  if (game && g_captured.load()) {
     const bool mouseKey = vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2;
     if (mouseKey ? BlockMouseNow() : BlockKeyboardNow()) return 0;
   }
@@ -277,7 +297,9 @@ BOOL WINAPI HkGetKeyboardState(PBYTE state) {
 template <int I> DWORD WINAPI HkXInputGetState(DWORD user, XINPUT_STATE* st) {
   InsideGuard guard;
   const DWORD r = g_xinput[I].original(user, st);
-  if (r == ERROR_SUCCESS && st && !FromUs(CG_RETURN_ADDRESS()) && g_captured.load()) st->Gamepad = XINPUT_GAMEPAD{};
+  const bool game = !FromUs(CG_RETURN_ADDRESS());
+  if (game) g_stats.xinput.fetch_add(1, std::memory_order_relaxed);
+  if (r == ERROR_SUCCESS && st && game && g_captured.load()) st->Gamepad = XINPUT_GAMEPAD{};
   return r;
 }
 constexpr XInputGetStateFn kXInputDetours[3] = {&HkXInputGetState<0>, &HkXInputGetState<1>, &HkXInputGetState<2>};
@@ -311,6 +333,7 @@ bool BlockDevice(BYTE type) {
 template <int I> HRESULT WINAPI HkDIGetDeviceState(IDirectInputDevice8W* dev, DWORD size, LPVOID data) {
   InsideGuard guard;
   const HRESULT hr = g_di[I].getState(dev, size, data);
+  g_stats.diState.fetch_add(1, std::memory_order_relaxed);
   if (SUCCEEDED(hr) && data && size && g_captured.load() && !FromUs(CG_RETURN_ADDRESS()) && BlockDevice(DeviceType(dev))) {
     ZeroMemory(data, size);
   }
@@ -321,6 +344,7 @@ template <int I>
 HRESULT WINAPI HkDIGetDeviceData(IDirectInputDevice8W* dev, DWORD objSize, LPDIDEVICEOBJECTDATA data, LPDWORD inOut, DWORD flags) {
   InsideGuard guard;
   const HRESULT hr = g_di[I].getData(dev, objSize, data, inOut, flags);
+  g_stats.diData.fetch_add(1, std::memory_order_relaxed);
   if (FAILED(hr) || !data || !inOut || !g_captured.load() || FromUs(CG_RETURN_ADDRESS())) return hr;
   const BYTE type = DeviceType(dev);
   if (!BlockDevice(type) || objSize < sizeof(DIDEVICEOBJECTDATA)) return hr;
@@ -340,8 +364,10 @@ HRESULT WINAPI HkDIGetDeviceData(IDirectInputDevice8W* dev, DWORD objSize, LPDID
 }
 
 void HookDirectInput() {
+  if (g_diHooked) return;
   HMODULE di = GetModuleHandleW(L"dinput8.dll");
   if (!di) return;
+  g_diHooked = true;
   using CreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
   auto create = reinterpret_cast<CreateFn>(GetProcAddress(di, "DirectInput8Create"));
   if (!create) return;
@@ -435,8 +461,15 @@ LRESULT CALLBACK HkWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
   InsideGuard guard;
   const bool key = IsLegacyKeyMsg(m);
   const bool mouse = IsLegacyMouseMsg(m);
-  if (key) g_lastLegacyKeyMs.store(util::NowMs());
-  if (mouse) g_lastLegacyMouseMs.store(util::NowMs());
+  if (key) {
+    g_lastLegacyKeyMs.store(util::NowMs());
+    g_stats.legacyKey.fetch_add(1, std::memory_order_relaxed);
+  }
+  if (mouse) {
+    g_lastLegacyMouseMs.store(util::NowMs());
+    g_stats.legacyMouse.fetch_add(1, std::memory_order_relaxed);
+  }
+  if (m == WM_INPUT) g_stats.wmInput.fetch_add(1, std::memory_order_relaxed);
 
   if (key || mouse || m == WM_SETFOCUS || m == WM_KILLFOCUS || m == WM_ACTIVATEAPP || m == WM_MOUSELEAVE || m == WM_INPUTLANGCHANGE) {
     Enqueue(m, w, l);
@@ -531,13 +564,26 @@ void SetCaptured(bool captured) {
   const bool was = g_captured.exchange(captured);
   if (was == captured || !g_hwnd) return;
   if (captured) {
-    HookXInput();   // the game may have loaded XInput after we installed
+    HookXInput();        // the game may have loaded XInput / DirectInput after we installed
+    HookDirectInput();
     if (o_GetCursorPos) o_GetCursorPos(&g_frozenCursor);
     if (o_ClipCursor) o_ClipCursor(nullptr);
   } else {
-    std::lock_guard lock(g_clipMutex);
-    if (o_ClipCursor && g_gameClipActive) o_ClipCursor(&g_gameClipRect);
-    if (o_SetCursorPos) o_SetCursorPos(g_frozenCursor.x, g_frozenCursor.y);
+    {
+      std::lock_guard lock(g_clipMutex);
+      if (o_ClipCursor && g_gameClipActive) o_ClipCursor(&g_gameClipRect);
+      if (o_SetCursorPos) o_SetCursorPos(g_frozenCursor.x, g_frozenCursor.y);
+    }
+    if (++g_captureSessions <= 3) {
+      log::Info("input",
+                "game input usage so far: WM_INPUT {} | GetRawInputData {} | GetRawInputBuffer {} | DInput state {} / data {} | "
+                "XInput {} | legacy mouse msgs {} | legacy key msgs {} | GetCursorPos {} | SetCursorPos {} | ClipCursor {} | "
+                "GetAsyncKeyState {} | dinput8 {}",
+                g_stats.wmInput.load(), g_stats.rawData.load(), g_stats.rawBuffer.load(), g_stats.diState.load(), g_stats.diData.load(),
+                g_stats.xinput.load(), g_stats.legacyMouse.load(), g_stats.legacyKey.load(), g_stats.getCursorPos.load(),
+                g_stats.setCursorPos.load(), g_stats.clipCursor.load(), g_stats.asyncKey.load(),
+                GetModuleHandleW(L"dinput8.dll") ? "loaded" : "not loaded");
+    }
   }
 }
 
@@ -557,6 +603,22 @@ void PumpToImGui() {
   }
   if (!g_hwnd || !ImGui::GetCurrentContext()) return;
   for (const QueuedMsg& q : pending) ImGui_ImplWin32_WndProcHandler(g_hwnd, q.msg, q.w, q.l);
+
+  // Self-healing mouse: games often swallow or never generate the window messages ImGui relies on
+  // (raw input with RIDEV_NOLEGACY, cursor re-centring, message filtering). While the menu is open,
+  // feed ImGui the real cursor position and physical button state every frame. ImGui drops events
+  // that repeat the current state, so this never double-clicks when messages do arrive.
+  if (!g_captured.load() || GetForegroundWindow() != g_hwnd) return;
+  ImGuiIO& io = ImGui::GetIO();
+  POINT pt{};
+  if ((o_GetCursorPos ? o_GetCursorPos(&pt) : GetCursorPos(&pt)) && ScreenToClient(g_hwnd, &pt)) {
+    io.AddMousePosEvent(static_cast<float>(pt.x), static_cast<float>(pt.y));
+  }
+  auto down = [](int vk) { return ((o_GetAsyncKeyState ? o_GetAsyncKeyState(vk) : GetAsyncKeyState(vk)) & 0x8000) != 0; };
+  const bool swapped = GetSystemMetrics(SM_SWAPBUTTON) != 0;   // GetAsyncKeyState reports physical buttons
+  io.AddMouseButtonEvent(ImGuiMouseButton_Left, down(swapped ? VK_RBUTTON : VK_LBUTTON));
+  io.AddMouseButtonEvent(ImGuiMouseButton_Right, down(swapped ? VK_LBUTTON : VK_RBUTTON));
+  io.AddMouseButtonEvent(ImGuiMouseButton_Middle, down(VK_MBUTTON));
 }
 
 }  // namespace cg::render::input

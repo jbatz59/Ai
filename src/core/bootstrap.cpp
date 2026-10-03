@@ -14,6 +14,7 @@
 #include "core/util.h"
 #include "features/feature.h"
 #include "game/bindings.h"
+#include "game/diagnostics.h"
 #include "game/script_vm.h"
 #include "mem/hook.h"
 #include "mem/hwbp.h"
@@ -45,6 +46,7 @@ void ResolveBindings() {
   log::Info("bindings", "{}/{} symbols resolved in {} ms", ok, total, util::NowMs() - started);
   if (g_unloading.load()) return;
   game::vm::Install();
+  game::diagnostics::AutoReportIfVmUnbound();
   // Feature state is restored on the render thread so it never races Registry::Tick.
   tasks::PostRender([] {
     auto& registry = features::Registry::Get();
