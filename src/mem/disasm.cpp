@@ -264,6 +264,15 @@ class Printer {
       case 0xE8: return Op("call", Target());
       case 0xE9: case 0xEB: return Op("jmp", Target());
       case 0xF4: return Op("hlt");
+      case 0x9C: return Op(hs_.p_66 ? "pushf" : "pushfq");
+      case 0x9D: return Op(hs_.p_66 ? "popf" : "popfq");
+      case 0x9E: return Op("sahf");
+      case 0x9F: return Op("lahf");
+      case 0xF5: return Op("cmc");
+      case 0xF8: return Op("clc");
+      case 0xF9: return Op("stc");
+      case 0xFC: return Op("cld");
+      case 0xFD: return Op("std");
       case 0xF6: return sub <= 1 ? Op("test", E(8, true), ImmAs(8)) : Op(kGroup3[sub], E(8, true));
       case 0xF7: return sub <= 1 ? Op("test", E(opSize_, true), ImmAs(opSize_)) : Op(kGroup3[sub], E(opSize_, true));
       case 0xFE:
@@ -291,18 +300,41 @@ class Printer {
       default: break;
     }
     if (op >= 0x80 && op <= 0x8F) return Op(std::string("j") + kCond[op & 15], Target());
+    if (op >= 0xC8 && op <= 0xCF) return Op("bswap", R((op & 7u) | (hs_.rex_b << 3), hs_.rex_w ? 64 : 32));
     if (!HasModrm()) return {};
     const int gpr = hs_.rex_w ? 64 : 32;   // GPR operand of SSE conversions / movd
     const std::string x = Xmm(reg_);
+    const unsigned sub = hs_.modrm_reg;
 
     if (op >= 0x40 && op <= 0x4F) return Op(std::string("cmov") + kCond[op & 15], R(reg_, opSize_), E(opSize_, false));
     if (op >= 0x90 && op <= 0x9F) return Op(std::string("set") + kCond[op & 15], E(8, true));
+    if (mand_ == 0x66) {
+      if (const char* m = PackedIntOp(op)) return Op(m, x, W());
+    }
 
     switch (op) {
-      case 0x1F: return hs_.modrm_reg == 0 ? Op("nop", E(opSize_, true)) : std::string();
+      case 0x1F: return sub == 0 ? Op("nop", E(opSize_, true)) : std::string();
+      case 0x18: {
+        static constexpr const char* kPrefetch[4] = {"prefetchnta", "prefetcht0", "prefetcht1", "prefetcht2"};
+        return (!RegForm() && sub < 4) ? Op(kPrefetch[sub], Mem(1, true)) : std::string();
+      }
       case 0x10: case 0x11: {
         const char* m = mand_ == 0xF3 ? "movss" : mand_ == 0xF2 ? "movsd" : mand_ == 0x66 ? "movupd" : "movups";
         return op == 0x10 ? Op(m, x, W()) : Op(m, W(), x);
+      }
+      case 0x12: case 0x16: {
+        if (mand_ != 0 && mand_ != 0x66) return {};
+        const bool high = op == 0x16;
+        if (RegForm()) return mand_ == 0 ? Op(high ? "movlhps" : "movhlps", x, Xmm(rm_)) : std::string();
+        return Op(std::string(high ? "movh" : "movl") + (mand_ == 0x66 ? "pd" : "ps"), x, W());
+      }
+      case 0x13: case 0x17: {
+        if ((mand_ != 0 && mand_ != 0x66) || RegForm()) return {};
+        return Op(std::string(op == 0x17 ? "movh" : "movl") + (mand_ == 0x66 ? "pd" : "ps"), W(), x);
+      }
+      case 0x14: case 0x15: {
+        if (mand_ != 0 && mand_ != 0x66) return {};
+        return Op(std::string(op == 0x14 ? "unpckl" : "unpckh") + (mand_ == 0x66 ? "pd" : "ps"), x, W());
       }
       case 0x28: case 0x29: {
         if (mand_ != 0 && mand_ != 0x66) return {};
@@ -322,6 +354,9 @@ class Printer {
         const std::string m = std::string(op == 0x2E ? "ucomis" : "comis") + (mand_ == 0x66 ? "d" : "s");
         return Op(m, x, W());
       }
+      case 0x50:
+        if ((mand_ != 0 && mand_ != 0x66) || !RegForm()) return {};
+        return Op(mand_ == 0x66 ? "movmskpd" : "movmskps", R(reg_, 32), Xmm(rm_));
       case 0x51: return Op(std::string("sqrt") + Sse(), x, W());
       case 0x58: return Op(std::string("add") + Sse(), x, W());
       case 0x59: return Op(std::string("mul") + Sse(), x, W());
@@ -329,6 +364,7 @@ class Printer {
       case 0x5D: return Op(std::string("min") + Sse(), x, W());
       case 0x5E: return Op(std::string("div") + Sse(), x, W());
       case 0x5F: return Op(std::string("max") + Sse(), x, W());
+      case 0xC2: return Op(std::string("cmp") + Sse(), x, W(), Hex(hs_.imm.imm8));
       case 0x54: case 0x55: case 0x56: case 0x57: {
         if (mand_ != 0 && mand_ != 0x66) return {};
         static constexpr const char* kLogic[4] = {"and", "andn", "or", "xor"};
@@ -355,14 +391,96 @@ class Printer {
         const char* m = mand_ == 0x66 ? "movdqa" : "movdqu";
         return op == 0x6F ? Op(m, x, W()) : Op(m, W(), x);
       }
+      case 0x70: {
+        const char* m = mand_ == 0x66 ? "pshufd" : mand_ == 0xF3 ? "pshufhw" : mand_ == 0xF2 ? "pshuflw" : nullptr;
+        return m ? Op(m, x, W(), Hex(hs_.imm.imm8)) : std::string();
+      }
+      case 0x71: case 0x72: case 0x73: {
+        if (mand_ != 0x66 || !RegForm()) return {};
+        static constexpr const char* kShiftW[8] = {nullptr, nullptr, "psrlw", nullptr, "psraw", nullptr, "psllw", nullptr};
+        static constexpr const char* kShiftD[8] = {nullptr, nullptr, "psrld", nullptr, "psrad", nullptr, "pslld", nullptr};
+        static constexpr const char* kShiftQ[8] = {nullptr, nullptr, "psrlq", "psrldq", nullptr, nullptr, "psllq", "pslldq"};
+        const char* m = (op == 0x71 ? kShiftW : op == 0x72 ? kShiftD : kShiftQ)[sub];
+        return m ? Op(m, Xmm(rm_), Hex(hs_.imm.imm8)) : std::string();
+      }
+      case 0xC6:
+        if (mand_ != 0 && mand_ != 0x66) return {};
+        return Op(mand_ == 0x66 ? "shufpd" : "shufps", x, W(), Hex(hs_.imm.imm8));
       case 0xD6: return mand_ == 0x66 ? Op("movq", W(), x) : std::string();
-      case 0xEF: return mand_ == 0x66 ? Op("pxor", x, W()) : std::string();
+      case 0xD7: return (mand_ == 0x66 && RegForm()) ? Op("pmovmskb", R(reg_, 32), Xmm(rm_)) : std::string();
+      case 0xAE:
+        if (mand_ != 0) return {};
+        if (RegForm()) return sub == 5 ? Op("lfence") : sub == 6 ? Op("mfence") : sub == 7 ? Op("sfence") : std::string();
+        if (sub == 2) return Op("ldmxcsr", Mem(4, true));
+        if (sub == 3) return Op("stmxcsr", Mem(4, true));
+        if (sub == 7) return Op("clflush", Mem(1, true));
+        return {};
+      case 0xA3: return Op("bt", E(opSize_, false), R(reg_, opSize_));
+      case 0xAB: return Op("bts", E(opSize_, false), R(reg_, opSize_));
+      case 0xB3: return Op("btr", E(opSize_, false), R(reg_, opSize_));
+      case 0xBB: return Op("btc", E(opSize_, false), R(reg_, opSize_));
+      case 0xBA: {
+        static constexpr const char* kBt[4] = {"bt", "bts", "btr", "btc"};
+        return sub >= 4 ? Op(kBt[sub - 4], E(opSize_, true), Hex(hs_.imm.imm8)) : std::string();
+      }
+      case 0xA4: return Op("shld", E(opSize_, false), R(reg_, opSize_), Hex(hs_.imm.imm8));
+      case 0xA5: return Op("shld", E(opSize_, false), R(reg_, opSize_), "cl");
+      case 0xAC: return Op("shrd", E(opSize_, false), R(reg_, opSize_), Hex(hs_.imm.imm8));
+      case 0xAD: return Op("shrd", E(opSize_, false), R(reg_, opSize_), "cl");
+      case 0xB0: return Op("cmpxchg", E(8, false), R(reg_, 8));
+      case 0xB1: return Op("cmpxchg", E(opSize_, false), R(reg_, opSize_));
+      case 0xC0: return Op("xadd", E(8, false), R(reg_, 8));
+      case 0xC1: return Op("xadd", E(opSize_, false), R(reg_, opSize_));
+      case 0xC7:
+        if (sub == 1 && !RegForm()) return Op(hs_.rex_w ? "cmpxchg16b" : "cmpxchg8b", Mem(hs_.rex_w ? 16 : 8, true));
+        if (sub == 6 && RegForm()) return Op("rdrand", R(rm_, opSize_));
+        return {};
+      case 0xB8: return mand_ == 0xF3 ? Op("popcnt", R(reg_, opSize_), E(opSize_, false)) : std::string();
+      case 0xBC: return Op(mand_ == 0xF3 ? "tzcnt" : "bsf", R(reg_, opSize_), E(opSize_, false));
+      case 0xBD: return Op(mand_ == 0xF3 ? "lzcnt" : "bsr", R(reg_, opSize_), E(opSize_, false));
       case 0xAF: return Op("imul", R(reg_, opSize_), E(opSize_, false));
       case 0xB6: return Op("movzx", R(reg_, opSize_), E(8, true));
       case 0xB7: return Op("movzx", R(reg_, opSize_), E(16, true));
       case 0xBE: return Op("movsx", R(reg_, opSize_), E(8, true));
       case 0xBF: return Op("movsx", R(reg_, opSize_), E(16, true));
       default: return {};
+    }
+  }
+
+  // 66 0F xx integer SSE2 operations of the form "op xmm, xmm/m128".
+  static const char* PackedIntOp(uint8_t op) {
+    switch (op) {
+      case 0x60: return "punpcklbw";
+      case 0x61: return "punpcklwd";
+      case 0x62: return "punpckldq";
+      case 0x63: return "packsswb";
+      case 0x64: return "pcmpgtb";
+      case 0x65: return "pcmpgtw";
+      case 0x66: return "pcmpgtd";
+      case 0x67: return "packuswb";
+      case 0x68: return "punpckhbw";
+      case 0x69: return "punpckhwd";
+      case 0x6A: return "punpckhdq";
+      case 0x6B: return "packssdw";
+      case 0x6C: return "punpcklqdq";
+      case 0x6D: return "punpckhqdq";
+      case 0x74: return "pcmpeqb";
+      case 0x75: return "pcmpeqw";
+      case 0x76: return "pcmpeqd";
+      case 0xD4: return "paddq";
+      case 0xD5: return "pmullw";
+      case 0xDB: return "pand";
+      case 0xDF: return "pandn";
+      case 0xEB: return "por";
+      case 0xEF: return "pxor";
+      case 0xF8: return "psubb";
+      case 0xF9: return "psubw";
+      case 0xFA: return "psubd";
+      case 0xFB: return "psubq";
+      case 0xFC: return "paddb";
+      case 0xFD: return "paddw";
+      case 0xFE: return "paddd";
+      default: return nullptr;
     }
   }
 

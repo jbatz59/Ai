@@ -1,6 +1,7 @@
 #include "core/bootstrap.h"
 
 #include <atomic>
+#include <filesystem>
 #include <string>
 
 #include "cg_version.h"
@@ -59,6 +60,30 @@ void ResolveBindings() {
             mem::Module::Main().name);
 }
 
+// One log block that answers "which build is this?" for every bug report.
+void LogEnvironmentFingerprint() {
+  const mem::Module& exe = mem::Module::Main();
+  const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(exe.base);
+  const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(exe.base + dos->e_lfanew);
+  std::error_code ec;
+  const auto fileSize = std::filesystem::file_size(paths::GameExe(), ec);
+  log::Info("core", "Host {} | image size {} | PE timestamp 0x{:08X} | PE checksum 0x{:08X} | file size {}", exe.name,
+            util::Hex(exe.size), nt->FileHeader.TimeDateStamp, nt->OptionalHeader.CheckSum, ec ? 0 : fileSize);
+  const std::wstring exePath = paths::GameExe().wstring();
+  if (util::IContains(util::Narrow(exePath), "\\windowsapps\\"))
+    log::Warn("core", "Microsoft Store / Game Pass build detected: untested, bindings may differ");
+  if (!util::IEquals(exe.name, "mafiadefinitiveedition.exe"))
+    log::Warn("core", "Host process is not mafiadefinitiveedition.exe; game features will stay unavailable");
+  std::string proxies;
+  for (const char* name : {"xinput1_4.dll", "dinput8.dll", "version.dll", "winmm.dll", "dxgi.dll", "d3d11.dll"}) {
+    if (auto m = mem::Module::Find(name)) {
+      const bool local = util::IContains(util::Narrow(m->path), util::Narrow(paths::GameExe().parent_path().wstring()));
+      proxies += std::string(" ") + name + (local ? "(game folder)" : "(system)");
+    }
+  }
+  log::Info("core", "Loaded interface DLLs:{}", proxies.empty() ? " none" : proxies);
+}
+
 bool WaitForGameWindow() {
   g_status.store("Waiting for game window");
   while (!g_unloading.load()) {
@@ -87,6 +112,7 @@ DWORD WINAPI InitThread(LPVOID) {
   log::Init(paths::Data(L"consigliere.log"));
   log::Info("core", "{} {} starting (host: {})", CG_NAME, CG_VERSION, util::Narrow(paths::GameExe().filename().wstring()));
   crash::Install();
+  LogEnvironmentFingerprint();
   Config::Get().Load(paths::Data(L"config.json"));
   log::SetMinLevel(static_cast<log::Level>(Config::Get().ReadInt("log.level", static_cast<int>(log::Level::Info))));
 

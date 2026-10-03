@@ -432,7 +432,7 @@ CG_TEST(core_log_copy_and_generation) {
 
   log::Warn("test", "{}", std::string(20000, 'x'));
   entries = log::Copy();
-  CHECK(!entries.empty() && entries.back().text.size() <= 8192 + 3);
+  CHECK(!entries.empty() && entries.back().text.size() <= 4096 + 3);
 
   CHECK_EQ(std::string(log::LevelName(log::Level::Error)), std::string("ERROR"));
   CHECK_EQ(std::string(log::LevelName(log::Level::Warn)), std::string("WARN"));

@@ -15,7 +15,7 @@ FLAGS=(-std=c++20 -fsyntax-only -Wall -Wextra -Wno-unused-parameter -Wno-missing
   -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0A00 -DIMGUI_DISABLE_OBSOLETE_FUNCTIONS -DJSON_USE_IMPLICIT_CONVERSIONS=1
   -I"$ROOT/src" -I"$GEN" -I"$ROOT/third_party/imgui" -I"$ROOT/third_party/imgui/backends"
   -I"$ROOT/third_party/minhook/include" -I"$ROOT/third_party/minhook/src/hde" -I"$ROOT/third_party/lua"
-  -I"$ROOT/third_party/nlohmann/include")
+  -I"$ROOT/third_party/nlohmann/include" -I"$ROOT/third_party/stb")
 rc=0
 for f in "$@"; do
   case "$f" in

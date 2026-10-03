@@ -6,7 +6,7 @@
 //
 //   AddressTableTick()                 freeze + hotkey processing for the address table
 //   kReGroup, k*Id                     menu group and the fixed tool-window ids
-//   FindTool()                         registered window by id (see the FindWindow note below)
+//   FindTool()                         registered window by id
 //   SignatureTarget / DisassemblyTarget  extra navigation targets implemented by tool windows
 //   GenerateSignatureFor(), GotoDisassembly()
 //   BindingsResolver(), Eval()         address expressions that understand bindings symbols
@@ -16,9 +16,6 @@
 //   AddressBar()                       ui::AddressInput that reports Enter-commits
 //   InputString(), InputStringMultiline()      ImGui text input over std::string
 //   ValueTypeCombo(), MonoFontScope, AsyncJob<R>
-//
-// NOTE: <windows.h> (pulled in by mem/module.h) defines FindWindow as a macro, which renames
-// ui::FindWindow inside any translation unit that includes both. Tool windows use FindTool().
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -71,7 +68,7 @@ inline constexpr const char* kScriptConsoleId = "tools.scriptconsole";
 inline constexpr const char* kGameLuaId = "tools.gamelua";
 inline constexpr const char* kModulesId = "tools.modules";
 
-// Registered window with the given id, or nullptr.
+// Registered window with the given id, or nullptr (string_view overload of ui::FindWindow).
 inline Window* FindTool(std::string_view id) {
   for (const auto& w : Windows()) {
     if (w && id == w->Id()) return w.get();

@@ -1,7 +1,10 @@
 #include "render/overlay.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <mutex>
 #include <string>
@@ -10,6 +13,8 @@
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
+#include <stb_image.h>
+#include <stb_image_write.h>
 
 #include "core/bootstrap.h"
 #include "core/config.h"
@@ -56,7 +61,18 @@ struct State {
   std::wstring screenshotPath;
   uint64_t screenshotFrame = 0;
   uint64_t unloadFrame = 0;   // test hook: CONSIGLIERE_TEST_UNLOAD_FRAME
+  bool captureThisFrame = false;
+  bool hideMenuThisFrame = false;
 };
+
+struct CaptureRequest {
+  CaptureCallback cb;
+  int maxWidth;
+  bool hideMenu;
+};
+std::mutex g_captureMutex;
+std::vector<CaptureRequest> g_captureQueue;   // requested, waiting for the next frame
+std::vector<CaptureRequest> g_captureActive;  // being served by the current frame
 
 State g;
 std::mutex g_frameMutex;   // whole frame, resize handling and teardown are mutually exclusive
@@ -241,64 +257,188 @@ void DoTeardown() {
   g.hwnd = nullptr;
 }
 
-void WriteScreenshot(IDXGISwapChain* sc) {
+float HalfToFloat(uint16_t h) {
+  const uint32_t sign = (h >> 15) & 1, exp = (h >> 10) & 0x1F, mant = h & 0x3FF;
+  float v;
+  if (exp == 0) v = std::ldexp(static_cast<float>(mant), -24);
+  else if (exp == 31) v = mant ? 0.0f : 65504.0f;
+  else v = std::ldexp(static_cast<float>(mant | 0x400), static_cast<int>(exp) - 25);
+  return sign ? -v : v;
+}
+
+uint8_t ToByte(float v) {
+  if (!(v > 0.0f)) return 0;
+  if (v >= 1.0f) return 255;
+  return static_cast<uint8_t>(v * 255.0f + 0.5f);
+}
+
+// Reads the back buffer into tightly packed RGBA8. Handles typeless/sRGB 8-bit, 10:10:10:2 and
+// FP16 (HDR add-ons such as RenoDX) back buffers, resolving MSAA first.
+bool ReadBackBuffer(IDXGISwapChain* sc, std::vector<uint8_t>& out, int& width, int& height) {
   ID3D11Texture2D* bb = nullptr;
-  if (FAILED(sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb))) || !bb) return;
+  if (FAILED(sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb))) || !bb) return false;
   D3D11_TEXTURE2D_DESC d{};
   bb->GetDesc(&d);
-  const bool bgra = d.Format == DXGI_FORMAT_B8G8R8A8_UNORM || d.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
-                    d.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
-  const bool rgba = d.Format == DXGI_FORMAT_R8G8B8A8_UNORM || d.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
-                    d.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
-  if ((!bgra && !rgba) || d.SampleDesc.Count != 1) {
-    log::Warn("render", "Screenshot: unsupported back buffer format {}", static_cast<int>(d.Format));
-    bb->Release();
-    return;
+  const DXGI_FORMAT fmt = ViewFormatFor(d.Format);
+  enum class Layout { Rgba8, Bgra8, Rgb10A2, Rgba16F } layout;
+  switch (fmt) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: layout = Layout::Rgba8; break;
+    case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: case DXGI_FORMAT_B8G8R8X8_UNORM: layout = Layout::Bgra8; break;
+    case DXGI_FORMAT_R10G10B10A2_UNORM: layout = Layout::Rgb10A2; break;
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: layout = Layout::Rgba16F; break;
+    default:
+      log::Warn("render", "Capture: unsupported back buffer format {}", static_cast<int>(d.Format));
+      bb->Release();
+      return false;
   }
+
+  ID3D11Texture2D* source = bb;
+  ID3D11Texture2D* resolved = nullptr;
+  if (d.SampleDesc.Count > 1) {
+    D3D11_TEXTURE2D_DESC rd = d;
+    rd.SampleDesc = {1, 0};
+    rd.Format = fmt;
+    rd.BindFlags = 0;
+    rd.MiscFlags = 0;
+    if (FAILED(g.device->CreateTexture2D(&rd, nullptr, &resolved))) {
+      bb->Release();
+      return false;
+    }
+    g.context->ResolveSubresource(resolved, 0, bb, 0, fmt);
+    source = resolved;
+  }
+
   D3D11_TEXTURE2D_DESC sd = d;
+  sd.SampleDesc = {1, 0};
   sd.Usage = D3D11_USAGE_STAGING;
   sd.BindFlags = 0;
   sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
   sd.MiscFlags = 0;
+  if (d.SampleDesc.Count > 1) sd.Format = fmt;
   ID3D11Texture2D* staging = nullptr;
+  bool ok = false;
   if (SUCCEEDED(g.device->CreateTexture2D(&sd, nullptr, &staging)) && staging) {
-    g.context->CopyResource(staging, bb);
+    g.context->CopyResource(staging, source);
     D3D11_MAPPED_SUBRESOURCE m{};
     if (SUCCEEDED(g.context->Map(staging, 0, D3D11_MAP_READ, 0, &m))) {
-      std::vector<uint8_t> pixels(static_cast<size_t>(d.Width) * d.Height * 4);
-      for (UINT y = 0; y < d.Height; ++y) {
-        const uint8_t* src = static_cast<const uint8_t*>(m.pData) + static_cast<size_t>(y) * m.RowPitch;
-        uint8_t* dst = pixels.data() + static_cast<size_t>(y) * d.Width * 4;
-        for (UINT x = 0; x < d.Width; ++x) {
-          dst[x * 4 + 0] = src[x * 4 + (rgba ? 2 : 0)];
-          dst[x * 4 + 1] = src[x * 4 + 1];
-          dst[x * 4 + 2] = src[x * 4 + (rgba ? 0 : 2)];
-          dst[x * 4 + 3] = 255;
+      width = static_cast<int>(d.Width);
+      height = static_cast<int>(d.Height);
+      out.resize(static_cast<size_t>(width) * height * 4);
+      for (int y = 0; y < height; ++y) {
+        const uint8_t* row = static_cast<const uint8_t*>(m.pData) + static_cast<size_t>(y) * m.RowPitch;
+        uint8_t* dst = out.data() + static_cast<size_t>(y) * width * 4;
+        for (int x = 0; x < width; ++x, dst += 4) {
+          switch (layout) {
+            case Layout::Rgba8: dst[0] = row[x * 4]; dst[1] = row[x * 4 + 1]; dst[2] = row[x * 4 + 2]; break;
+            case Layout::Bgra8: dst[0] = row[x * 4 + 2]; dst[1] = row[x * 4 + 1]; dst[2] = row[x * 4]; break;
+            case Layout::Rgb10A2: {
+              uint32_t px;
+              memcpy(&px, row + x * 4, 4);
+              dst[0] = static_cast<uint8_t>((px & 0x3FF) >> 2);
+              dst[1] = static_cast<uint8_t>(((px >> 10) & 0x3FF) >> 2);
+              dst[2] = static_cast<uint8_t>(((px >> 20) & 0x3FF) >> 2);
+              break;
+            }
+            case Layout::Rgba16F: {
+              uint16_t h[4];
+              memcpy(h, row + x * 8, 8);
+              // scRGB linear -> display-ish sRGB
+              for (int c = 0; c < 3; ++c) dst[c] = ToByte(std::pow(std::max(0.0f, HalfToFloat(h[c])), 1.0f / 2.2f));
+              break;
+            }
+          }
+          dst[3] = 255;
         }
       }
       g.context->Unmap(staging, 0);
-      BITMAPFILEHEADER fh{};
-      BITMAPINFOHEADER ih{};
-      ih.biSize = sizeof(ih);
-      ih.biWidth = static_cast<LONG>(d.Width);
-      ih.biHeight = -static_cast<LONG>(d.Height);   // top-down
-      ih.biPlanes = 1;
-      ih.biBitCount = 32;
-      ih.biCompression = BI_RGB;
-      fh.bfType = 0x4D42;
-      fh.bfOffBits = sizeof(fh) + sizeof(ih);
-      fh.bfSize = fh.bfOffBits + static_cast<DWORD>(pixels.size());
-      if (FILE* f = _wfopen(g.screenshotPath.c_str(), L"wb")) {
-        fwrite(&fh, sizeof(fh), 1, f);
-        fwrite(&ih, sizeof(ih), 1, f);
-        fwrite(pixels.data(), 1, pixels.size(), f);
-        fclose(f);
-        log::Info("render", "Screenshot written ({}x{})", d.Width, d.Height);
-      }
+      ok = true;
     }
     staging->Release();
   }
+  if (resolved) resolved->Release();
   bb->Release();
+  return ok;
+}
+
+// Box-filter downscale so that width <= maxWidth (keeps aspect ratio).
+void Downscale(const std::vector<uint8_t>& src, int w, int h, int maxWidth, std::vector<uint8_t>& dst, int& ow, int& oh) {
+  if (maxWidth <= 0 || w <= maxWidth) {
+    dst = src;
+    ow = w;
+    oh = h;
+    return;
+  }
+  ow = maxWidth;
+  oh = std::max(1, static_cast<int>(static_cast<int64_t>(h) * maxWidth / w));
+  dst.assign(static_cast<size_t>(ow) * oh * 4, 0);
+  for (int y = 0; y < oh; ++y) {
+    const int sy0 = static_cast<int>(static_cast<int64_t>(y) * h / oh), sy1 = std::max(sy0 + 1, static_cast<int>(static_cast<int64_t>(y + 1) * h / oh));
+    for (int x = 0; x < ow; ++x) {
+      const int sx0 = static_cast<int>(static_cast<int64_t>(x) * w / ow), sx1 = std::max(sx0 + 1, static_cast<int>(static_cast<int64_t>(x + 1) * w / ow));
+      uint32_t acc[4]{};
+      uint32_t n = 0;
+      for (int sy = sy0; sy < sy1 && sy < h; ++sy)
+        for (int sx = sx0; sx < sx1 && sx < w; ++sx, ++n)
+          for (int c = 0; c < 4; ++c) acc[c] += src[(static_cast<size_t>(sy) * w + sx) * 4 + c];
+      for (int c = 0; c < 4; ++c) dst[(static_cast<size_t>(y) * ow + x) * 4 + c] = static_cast<uint8_t>(n ? acc[c] / n : 0);
+    }
+  }
+}
+
+void ServeCaptures(IDXGISwapChain* sc) {
+  std::vector<CaptureRequest> requests;
+  {
+    std::lock_guard lock(g_captureMutex);
+    requests.swap(g_captureActive);
+  }
+  if (requests.empty()) return;
+  std::vector<uint8_t> full;
+  int w = 0, h = 0;
+  const bool ok = ReadBackBuffer(sc, full, w, h);
+  for (auto& r : requests) {
+    if (!r.cb) continue;
+    if (!ok) {
+      r.cb(false, {}, 0, 0);
+      continue;
+    }
+    std::vector<uint8_t> px;
+    int ow = 0, oh = 0;
+    Downscale(full, w, h, r.maxWidth, px, ow, oh);
+    r.cb(true, std::move(px), ow, oh);
+  }
+}
+
+bool WriteFileW(const std::wstring& path, const void* data, size_t size) {
+  FILE* f = _wfopen(path.c_str(), L"wb");
+  if (!f) return false;
+  const bool ok = fwrite(data, 1, size, f) == size;
+  return fclose(f) == 0 && ok;
+}
+
+bool SaveBmp(const std::wstring& path, const uint8_t* rgba, int w, int h) {
+  std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4);
+  for (size_t i = 0; i < bgra.size(); i += 4) {
+    bgra[i] = rgba[i + 2];
+    bgra[i + 1] = rgba[i + 1];
+    bgra[i + 2] = rgba[i];
+    bgra[i + 3] = 255;
+  }
+  BITMAPFILEHEADER fh{};
+  BITMAPINFOHEADER ih{};
+  ih.biSize = sizeof(ih);
+  ih.biWidth = w;
+  ih.biHeight = -h;   // top-down
+  ih.biPlanes = 1;
+  ih.biBitCount = 32;
+  ih.biCompression = BI_RGB;
+  fh.bfType = 0x4D42;
+  fh.bfOffBits = sizeof(fh) + sizeof(ih);
+  fh.bfSize = fh.bfOffBits + static_cast<DWORD>(bgra.size());
+  std::vector<uint8_t> file(fh.bfSize);
+  memcpy(file.data(), &fh, sizeof(fh));
+  memcpy(file.data() + sizeof(fh), &ih, sizeof(ih));
+  memcpy(file.data() + fh.bfOffBits, bgra.data(), bgra.size());
+  return WriteFileW(path, file.data(), file.size());
 }
 
 void HandleGlobalHotkeys() {
@@ -350,6 +490,15 @@ void Frame(IDXGISwapChain* sc) {
     }
   }
 
+  {
+    std::lock_guard lock(g_captureMutex);
+    g.captureThisFrame = !g_captureQueue.empty();
+    g.hideMenuThisFrame = false;
+    for (const auto& r : g_captureQueue) g.hideMenuThisFrame |= r.hideMenu;
+    for (auto& r : g_captureQueue) g_captureActive.push_back(std::move(r));
+    g_captureQueue.clear();
+  }
+
   ImGui_ImplDX11_NewFrame();
   input::PumpToImGui();
   ImGui_ImplWin32_NewFrame();
@@ -368,7 +517,11 @@ void Frame(IDXGISwapChain* sc) {
   ui::DrawFrame();
   ImGui::Render();
 
-  if (!EnsureRenderTarget(sc)) return;
+  if (!EnsureRenderTarget(sc)) {
+    if (g.captureThisFrame) ServeCaptures(sc);   // still answer requests (from the game image)
+    g.captureThisFrame = g.hideMenuThisFrame = false;
+    return;
+  }
   ID3D11RenderTargetView* oldRtv[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
   ID3D11DepthStencilView* oldDsv = nullptr;
   g.context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRtv, &oldDsv);
@@ -378,7 +531,11 @@ void Frame(IDXGISwapChain* sc) {
   for (auto*& r : oldRtv) ReleaseT(r);
   ReleaseT(oldDsv);
 
-  if (g.screenshotFrame && g.frame == g.screenshotFrame) WriteScreenshot(sc);
+  if (g.captureThisFrame) {
+    ServeCaptures(sc);
+    g.captureThisFrame = g.hideMenuThisFrame = false;
+  }
+  if (g.screenshotFrame && g.frame + 1 == g.screenshotFrame) RequestScreenshot(g.screenshotPath, {}, false);
   if (g.unloadFrame && g.frame == g.unloadFrame) RequestUnload();
 }
 
@@ -447,6 +604,94 @@ void Shutdown() {
     CloseHandle(g_teardownDone);
     g_teardownDone = nullptr;
   }
+}
+
+void RequestCapture(CaptureCallback cb, int maxWidth, bool hideMenu) {
+  std::lock_guard lock(g_captureMutex);
+  if (g_captureQueue.size() >= 16) {
+    if (cb) tasks::PostRender([cb] { cb(false, {}, 0, 0); });
+    return;
+  }
+  g_captureQueue.push_back({std::move(cb), maxWidth, hideMenu});
+}
+
+void RequestScreenshot(std::wstring path, std::function<void(bool ok, std::wstring path)> done, bool hideMenu) {
+  RequestCapture(
+      [path, done](bool ok, std::vector<uint8_t> rgba, int w, int h) {
+        if (!ok) {
+          if (done) done(false, path);
+          return;
+        }
+        // Encoding a 4K PNG takes ~100 ms: keep it off the render thread.
+        tasks::RunAsync([path, done, px = std::move(rgba), w, h] {
+          const bool png = path.size() >= 4 && util::IEquals(util::Narrow(path.substr(path.size() - 4)), ".png");
+          const bool written = png ? SavePng(path, px.data(), w, h) : SaveBmp(path, px.data(), w, h);
+          if (written) log::Info("render", "Screenshot written ({}x{}): {}", w, h, util::Narrow(path));
+          else log::Warn("render", "Screenshot could not be written: {}", util::Narrow(path));
+          if (done) tasks::PostRender([done, path, written] { done(written, path); });
+        });
+      },
+      0, hideMenu);
+}
+
+bool CaptureHidesMenu() { return g.hideMenuThisFrame; }
+
+bool SavePng(const std::wstring& path, const uint8_t* rgba, int width, int height) {
+  if (!rgba || width <= 0 || height <= 0) return false;
+  std::vector<uint8_t> encoded;
+  const int ok = stbi_write_png_to_func(
+      [](void* ctx, void* data, int size) {
+        auto* v = static_cast<std::vector<uint8_t>*>(ctx);
+        v->insert(v->end(), static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + size);
+      },
+      &encoded, width, height, 4, rgba, width * 4);
+  return ok && WriteFileW(path, encoded.data(), encoded.size());
+}
+
+Texture CreateTexture(const uint8_t* rgba, int width, int height) {
+  Texture t;
+  if (!g.device || !rgba || width <= 0 || height <= 0 || width > 16384 || height > 16384) return t;
+  D3D11_TEXTURE2D_DESC d{};
+  d.Width = static_cast<UINT>(width);
+  d.Height = static_cast<UINT>(height);
+  d.MipLevels = 1;
+  d.ArraySize = 1;
+  d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  d.SampleDesc.Count = 1;
+  d.Usage = D3D11_USAGE_IMMUTABLE;
+  d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  D3D11_SUBRESOURCE_DATA init{rgba, static_cast<UINT>(width * 4), 0};
+  ID3D11Texture2D* tex = nullptr;
+  if (FAILED(g.device->CreateTexture2D(&d, &init, &tex)) || !tex) return t;
+  ID3D11ShaderResourceView* srv = nullptr;
+  const HRESULT hr = g.device->CreateShaderResourceView(tex, nullptr, &srv);
+  tex->Release();
+  if (FAILED(hr) || !srv) return t;
+  t.id = reinterpret_cast<ImTextureID>(srv);
+  t.width = width;
+  t.height = height;
+  return t;
+}
+
+Texture LoadTextureFile(const std::wstring& path) {
+  FILE* f = _wfopen(path.c_str(), L"rb");
+  if (!f) return {};
+  std::vector<uint8_t> bytes;
+  uint8_t buf[65536];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof(buf), f)) > 0 && bytes.size() < (64u << 20)) bytes.insert(bytes.end(), buf, buf + n);
+  fclose(f);
+  int w = 0, h = 0, comp = 0;
+  stbi_uc* px = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &w, &h, &comp, 4);
+  if (!px) return {};
+  Texture t = CreateTexture(px, w, h);
+  stbi_image_free(px);
+  return t;
+}
+
+void DestroyTexture(Texture& t) {
+  if (t.id) reinterpret_cast<ID3D11ShaderResourceView*>(t.id)->Release();
+  t = {};
 }
 
 bool Initialized() { return g_initialized.load(); }

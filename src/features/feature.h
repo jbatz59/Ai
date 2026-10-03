@@ -12,7 +12,8 @@
 
 namespace cg::features {
 
-enum class Category : uint8_t { Player, Vehicle, Weapons, World, Teleport, Camera, Visuals, CheatTable, Scripts, Count };
+enum class Category : uint8_t { Player, Vehicle, Weapons, World, Teleport, Camera, Visuals, Fun, CheatTable, Scripts, Count };
+// Fun = "Fun & Chaos": cinematic effects, game modes, sandbox toys (src/fun/).
 const char* CategoryName(Category c);
 const char* CategoryIcon(Category c);   // CG_ICON_* glyph
 
@@ -101,6 +102,7 @@ void RegisterWorldFeatures(Registry& r);
 void RegisterTeleportFeatures(Registry& r);
 void RegisterCameraFeatures(Registry& r);
 void RegisterVisualFeatures(Registry& r);
+void RegisterFunFeatures(Registry& r);   // src/fun/ — cinema, modes, sandbox
 // Data-driven cheats from Bindings::Cheats(); re-run after every bindings reload.
 void SyncCheatTableFeatures(Registry& r);
 

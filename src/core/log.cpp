@@ -14,10 +14,11 @@ namespace cg::log {
 namespace {
 
 constexpr size_t kRingCapacity = 4096;
-constexpr size_t kMaxTextBytes = 8192;
+constexpr size_t kMaxTextBytes = 4096;
 constexpr size_t kMaxChannelBytes = 32;
 constexpr size_t kMaxPendingBytes = 64 * 1024;
 constexpr uint64_t kFlushIntervalMs = 1000;
+constexpr uint64_t kMaxFileBytes = 64ull * 1024 * 1024;   // a runaway Trace loop must not fill the disk
 
 #ifdef NDEBUG
 constexpr Level kDefaultMinLevel = Level::Info;
@@ -32,6 +33,8 @@ struct State {
   HANDLE file = INVALID_HANDLE_VALUE;
   std::string pending;       // formatted lines not yet handed to WriteFile
   uint64_t lastFlushMs = 0;
+  uint64_t fileBytes = 0;
+  bool fileFull = false;
 };
 
 // Intentionally leaked: the logger must outlive every static destructor that might still log, and
@@ -93,10 +96,15 @@ std::string FormatLine(const Entry& e) {
 void FlushLocked(State& s) {
   s.lastFlushMs = util::NowMs();
   if (s.pending.empty()) return;
-  if (s.file == INVALID_HANDLE_VALUE) {
+  if (s.file == INVALID_HANDLE_VALUE || s.fileFull) {
     s.pending.clear();
     return;
   }
+  if (s.fileBytes + s.pending.size() > kMaxFileBytes) {
+    s.fileFull = true;
+    s.pending = "--- log file size limit reached; further entries are kept in memory only ---\r\n";
+  }
+  s.fileBytes += s.pending.size();
   const char* p = s.pending.data();
   size_t left = s.pending.size();
   while (left > 0) {
@@ -120,7 +128,7 @@ void AppendLocked(State& s, Entry&& e, const std::string& line) {
     s.ring[s.head] = std::move(e);
     s.head = (s.head + 1) % kRingCapacity;
   }
-  if (s.file == INVALID_HANDLE_VALUE) return;
+  if (s.file == INVALID_HANDLE_VALUE || s.fileFull) return;
   s.pending += line;
   if (lvl >= Level::Warn || s.pending.size() >= kMaxPendingBytes || util::NowMs() - s.lastFlushMs >= kFlushIntervalMs)
     FlushLocked(s);
@@ -176,6 +184,8 @@ void Init(const std::filesystem::path& file) {
       return;
     }
     s.file = h;
+    s.fileBytes = 0;
+    s.fileFull = false;
     // Entries logged before Init (memory only) are written out so the file tells the whole story.
     s.pending.clear();
     const size_t n = s.ring.size();

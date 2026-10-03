@@ -26,3 +26,7 @@ endif()
 add_library(cg_json INTERFACE)
 target_include_directories(cg_json INTERFACE nlohmann/include)
 target_compile_definitions(cg_json INTERFACE JSON_USE_IMPLICIT_CONVERSIONS=1)
+
+# --- stb_image / stb_image_write (public domain or MIT, header only) -------
+add_library(cg_stb INTERFACE)
+target_include_directories(cg_stb INTERFACE stb)

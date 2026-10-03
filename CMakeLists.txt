@@ -41,7 +41,7 @@ list(FILTER CG_SOURCES EXCLUDE REGEX ".*/src/core/dllmain\\.cpp$")
 
 add_library(cg_core STATIC ${CG_SOURCES})
 target_include_directories(cg_core PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(cg_core PUBLIC cg_imgui cg_minhook cg_lua cg_json
+target_link_libraries(cg_core PUBLIC cg_imgui cg_minhook cg_lua cg_json cg_stb
   d3d11 dxgi d3dcompiler dxguid dbghelp psapi shlwapi ole32 uuid)
 if(MSVC)
   target_compile_options(cg_core PRIVATE /W4 /wd4100 /wd4201 /wd4324)

@@ -21,6 +21,7 @@ namespace {
 // A queue that nobody drains (e.g. the game thread stalls on a loading screen) must not grow forever.
 constexpr size_t kMaxQueued = 65536;
 constexpr size_t kMaxAsyncQueued = 4096;
+constexpr size_t kRecycleCapacity = 1024;
 constexpr uint64_t kOverflowLogIntervalMs = 10'000;
 
 struct Queue {
@@ -82,7 +83,17 @@ void Drain(Queue& q) {
   } catch (...) {
     return;
   }
+  if (batch.empty()) return;
   for (Fn& fn : batch) RunGuarded(fn, q.name);
+  batch.clear();
+  // Hand the (modest) buffer back so steady per-frame posting does not reallocate every frame.
+  if (batch.capacity() <= kRecycleCapacity) {
+    try {
+      std::lock_guard lock(q.mutex);
+      if (q.items.empty() && q.items.capacity() < batch.capacity()) q.items.swap(batch);
+    } catch (...) {
+    }
+  }
 }
 
 void NameCurrentThread(const wchar_t* name) {

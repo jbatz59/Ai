@@ -99,8 +99,12 @@ uintptr_t g_tryHandler = 0;   // our module's __try language handler (MSVC build
 Request g_req;
 uintptr_t g_seenPcs[kMaxSeenPcs];
 size_t g_seenCount = 0;
-const EXCEPTION_RECORD* g_lastRecord = nullptr;
+// The last exception a report was written for. The unhandled filter can run for an exception the
+// VEH already reported (and some hosts call it more than once), so it is matched on these fields.
+bool g_haveLast = false;
+bool g_lastUnhandled = false;   // the last report already says the exception went unhandled
 DWORD g_lastThread = 0;
+DWORD g_lastCode = 0;
 uintptr_t g_lastAddress = 0;
 
 // Text report of the last first-chance report (reporter thread only). Leaked: no exit-time destructor.
@@ -621,11 +625,13 @@ void Report(EXCEPTION_POINTERS* ep, bool unhandled) {
   const auto pc = static_cast<uintptr_t>(ep->ContextRecord->Rip);
   const auto address = reinterpret_cast<uintptr_t>(rec->ExceptionAddress);
 
-  // The exception the VEH just reported first-chance reached the unhandled filter: it is a real crash.
-  if (unhandled && rec == g_lastRecord && tid == g_lastThread && address == g_lastAddress) {
-    g_req.job = Job::MarkUnhandled;
-    if (!RunJob()) return;
-    g_lastRecord = nullptr;
+  if (unhandled && g_haveLast && tid == g_lastThread && rec->ExceptionCode == g_lastCode && address == g_lastAddress) {
+    // The exception the VEH reported first-chance reached the unhandled filter: it is a real crash.
+    if (!g_lastUnhandled) {
+      g_req.job = Job::MarkUnhandled;
+      if (!RunJob()) return;
+      g_lastUnhandled = true;
+    }
     g_busy.store(false, std::memory_order_release);
     return;
   }
@@ -654,12 +660,12 @@ void Report(EXCEPTION_POINTERS* ep, bool unhandled) {
 
   if (g_req.reported) {
     g_reportCount.fetch_add(1, std::memory_order_relaxed);
-    if (!unhandled) {
-      g_lastRecord = rec;
-      g_lastThread = tid;
-      g_lastAddress = address;
-      if (g_seenCount < kMaxSeenPcs) g_seenPcs[g_seenCount++] = pc;
-    }
+    g_haveLast = true;
+    g_lastUnhandled = unhandled;
+    g_lastThread = tid;
+    g_lastCode = rec->ExceptionCode;
+    g_lastAddress = address;
+    if (!unhandled && g_seenCount < kMaxSeenPcs) g_seenPcs[g_seenCount++] = pc;
   }
   g_busy.store(false, std::memory_order_release);
 }
