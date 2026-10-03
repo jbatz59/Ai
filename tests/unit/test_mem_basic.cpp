@@ -37,6 +37,13 @@ CG_TEST_NOINLINE uint32_t SigTargetFn(uint32_t x) {
   return h * 0x2F1u + 0x11u;
 }
 
+// MSVC emits no .pdata for frameless leaf functions; this one calls out, so it always has an entry.
+uint32_t (*volatile g_sigTarget)(uint32_t) = &SigTargetFn;
+CG_TEST_NOINLINE uint32_t NonLeafFn(uint32_t x) {
+  const uint32_t r = g_sigTarget(x) + g_sigTarget(x ^ 0x77u);
+  return r ^ g_sigTarget(r);
+}
+
 alignas(64) const char kXrefMarker[] = "cg-mem-basic-xref-marker-5e1d";
 alignas(64) const wchar_t kWideMarker[] = L"cg-mem-basic-wide-marker-77";
 
@@ -434,7 +441,9 @@ CG_TEST(mem_pattern_module_strings_and_xrefs) {
 }
 
 CG_TEST(mem_pattern_function_start) {
-  const uintptr_t fn = CodeAddress(&SigTargetFn);
+  uint32_t (*volatile call)(uint32_t) = &NonLeafFn;
+  CHECK(call(5) != 0x12345678u);
+  const uintptr_t fn = CodeAddress(&NonLeafFn);
   CHECK_EQ(mem::FunctionStart(fn).value_or(0), fn);
   CHECK_EQ(mem::FunctionStart(fn + 1).value_or(0), fn);
   CHECK(!mem::FunctionStart(0).has_value());

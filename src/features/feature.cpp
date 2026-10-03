@@ -275,6 +275,7 @@ const char* CategoryName(Category c) {
     case Category::Teleport: return "Teleport";
     case Category::Camera: return "Camera";
     case Category::Visuals: return "Visuals";
+    case Category::Fun: return "Fun & Chaos";
     case Category::CheatTable: return "Cheat Table";
     case Category::Scripts: return "Scripts";
     case Category::Count: break;
@@ -291,6 +292,7 @@ const char* CategoryIcon(Category c) {
     case Category::Teleport: return CG_ICON_TELEPORT;
     case Category::Camera: return CG_ICON_CAMERA;
     case Category::Visuals: return CG_ICON_VISUALS;
+    case Category::Fun: return CG_ICON_LIGHTNING;
     case Category::CheatTable: return CG_ICON_TABLE;
     case Category::Scripts: return CG_ICON_SCRIPT;
     case Category::Count: break;
@@ -580,6 +582,7 @@ void Registry::RegisterBuiltins() {
       {"player", &RegisterPlayerFeatures},     {"vehicle", &RegisterVehicleFeatures}, {"weapons", &RegisterWeaponFeatures},
       {"world", &RegisterWorldFeatures},       {"teleport", &RegisterTeleportFeatures},
       {"camera", &RegisterCameraFeatures},     {"visuals", &RegisterVisualFeatures},
+      {"fun", &RegisterFunFeatures},
   };
   for (const auto& [name, fn] : kModules) {
     const size_t before = features_.size();

@@ -34,6 +34,10 @@
 #include "ui/notify.h"
 #include "ui/ui.h"
 
+namespace cg::ui {
+void AddressTableTick();   // ui/tools/address_table_window.cpp: frozen entries + per-entry hotkeys
+}
+
 namespace cg::render {
 namespace {
 
@@ -471,6 +475,7 @@ void Frame(IDXGISwapChain* sc) {
   if (!tasks::GameThreadHookActive()) tasks::DrainGame();
   game::state::Tick(dt);
   features::Registry::Get().Tick(dt);
+  ui::AddressTableTick();
   script::Engine::Get().Tick(dt);
 
   g.accSecond += dt;

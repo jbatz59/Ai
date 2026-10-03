@@ -37,8 +37,10 @@ namespace cg::features {
 // three-digit \ddd escape. Valid in Lua 5.1 (HKS) and 5.4.
 std::string LuaQuote(std::string_view s);
 
-// Lua numeric literal, independent of the C locale, shortest form that round-trips the double.
-// Non-finite values become "nil" so the game call fails loudly instead of receiving NaN/inf.
+// Lua number expression, independent of the C locale, shortest form that round-trips the double
+// ("5", "0.1", "1e+21"). Negative values are parenthesised ("(-2.5)") so "x-" .. LuaNumber(-1) can
+// never form a "--" comment. Non-finite values become "nil" so the game call fails loudly instead of
+// receiving NaN/inf.
 std::string LuaNumber(double v);
 
 inline const char* LuaBool(bool b) { return b ? "true" : "false"; }

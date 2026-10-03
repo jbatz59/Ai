@@ -16,7 +16,7 @@
 namespace cg::ui::detail {
 
 // ---- Pages of the main menu -----------------------------------------------------------------
-enum class Page : uint8_t { Home, Player, Vehicle, Weapons, World, Teleport, Camera, Visuals, CheatTable, Scripts, Tools, Settings, About, Count };
+enum class Page : uint8_t { Home, Player, Vehicle, Weapons, World, Teleport, Camera, Visuals, Fun, CheatTable, Scripts, Tools, Settings, About, Count };
 
 const char* PageName(Page p);    // "Cheat Table"
 const char* PageKey(Page p);     // stable config value: "cheat_table"

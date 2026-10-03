@@ -39,7 +39,7 @@ std::optional<std::string> GenerateSignature(uintptr_t address, const Module& m,
 
     Pattern pat;
     uintptr_t cur = address;
-    while (true) {
+    for (;;) {
       Insn insn;
       if (!detail::DecodeAt(cur, insn, false)) return std::nullopt;
       if (cur + insn.length > secEnd || pat.Size() + insn.length > maxBytes) return std::nullopt;

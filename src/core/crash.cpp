@@ -66,7 +66,8 @@ struct Request {
   CONTEXT context;
   EXCEPTION_POINTERS pointers;   // points at the copies above
   DWORD threadId;
-  uintptr_t stackBase;           // NT_TIB::StackBase of the faulting thread (exclusive upper bound)
+  uintptr_t stackLow;            // faulting thread's stack reservation [stackLow, stackHigh)
+  uintptr_t stackHigh;
   bool unhandled;                // from the unhandled-exception filter (vs. first-chance VEH)
   bool reported;                 // set by the reporter: a report was written
 };
@@ -487,11 +488,7 @@ bool WriteReport() {
     const EXCEPTION_RECORD& rec = r.record;
     const CONTEXT& ctx = r.context;
 
-    StackBounds stack{0, r.stackBase};
-    MEMORY_BASIC_INFORMATION mbi;
-    if (r.stackBase && VirtualQuery(reinterpret_cast<LPCVOID>(r.stackBase - 1), &mbi, sizeof(mbi)) == sizeof(mbi))
-      stack.low = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
-
+    const StackBounds stack{r.stackLow, r.stackHigh};
     WalkResult walk{};
     if (stack.low && stack.high > stack.low) WalkStack(&ctx, &stack, &walk);
     else walk.aborted = true;
@@ -653,7 +650,10 @@ void Report(EXCEPTION_POINTERS* ep, bool unhandled) {
   g_req.pointers.ExceptionRecord = &g_req.record;
   g_req.pointers.ContextRecord = &g_req.context;
   g_req.threadId = tid;
-  g_req.stackBase = reinterpret_cast<uintptr_t>(reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackBase);
+  ULONG_PTR stackLow = 0, stackHigh = 0;
+  GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+  g_req.stackLow = stackLow;
+  g_req.stackHigh = stackHigh;
   g_req.unhandled = unhandled;
   g_req.reported = false;
   if (!RunJob()) return;

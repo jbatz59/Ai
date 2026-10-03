@@ -1,10 +1,10 @@
 #include "mem/safe.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <iterator>
 #include <mutex>
-#include <vector>
 
 #include <windows.h>
 
@@ -28,6 +28,7 @@ constexpr size_t kCacheSlotBits = 8;
 constexpr uint64_t kCacheTtlMs = 250;
 constexpr size_t kMaxStringChars = 1u << 20;   // hard cap for ReadCString/ReadWString
 constexpr uint64_t kBlockedWarnIntervalMs = 5000;
+constexpr size_t kMaxWriteRegions = 64;   // a single WriteRaw may span at most this many regions
 
 struct Region {
   uintptr_t begin = 0;
@@ -163,35 +164,38 @@ bool WriteRaw(uintptr_t addr, const void* in, size_t size) {
 
   std::lock_guard lock(g_protectMutex);
 
-  // Fresh (uncached) region info: the original protection must be exact to restore it.
-  std::vector<ProtectSpan> spans;
+  // Fresh (uncached) region info: the original protection must be exact to restore it. Fixed
+  // capacity keeps this path allocation-free; real writes touch one or two regions.
+  std::array<ProtectSpan, kMaxWriteRegions> spans;
+  size_t spanCount = 0;
   bool allWritable = true;
   bool anyExec = false;
   const uintptr_t end = addr + size;
   for (uintptr_t cur = addr; cur < end;) {
     Region r;
-    if (!QueryUncached(cur, r)) return false;
+    if (!QueryUncached(cur, r) || spanCount == spans.size()) return false;
     // Uncommitted, PAGE_NOACCESS and PAGE_GUARD memory are never written: they are deliberate
     // tripwires (stack guards, anti-tamper) or simply not there.
     if (r.protect == 0 || (r.protect & PAGE_GUARD) || (r.protect & 0xFF) == PAGE_NOACCESS) return false;
     const uintptr_t segEnd = std::min(end, r.end);
-    spans.push_back({cur, static_cast<size_t>(segEnd - cur), r.protect});
+    spans[spanCount++] = {cur, static_cast<size_t>(segEnd - cur), r.protect};
     allWritable = allWritable && detail::ProtWritable(r.protect);
     anyExec = anyExec || detail::ProtExecutable(r.protect);
     cur = segEnd;
   }
 
-  std::vector<ProtectSpan> changed;
-  auto restore = [&changed] {
-    for (const ProtectSpan& s : changed) {
+  std::array<ProtectSpan, kMaxWriteRegions> changed;
+  size_t changedCount = 0;
+  auto restore = [&] {
+    for (size_t i = 0; i < changedCount; ++i) {
       DWORD ignored = 0;
-      VirtualProtect(reinterpret_cast<LPVOID>(s.begin), s.size, s.protect, &ignored);
+      VirtualProtect(reinterpret_cast<LPVOID>(changed[i].begin), changed[i].size, changed[i].protect, &ignored);
     }
   };
 
   if (!allWritable) {
-    changed.reserve(spans.size());
-    for (const ProtectSpan& s : spans) {
+    for (size_t i = 0; i < spanCount; ++i) {
+      const ProtectSpan& s = spans[i];
       if (detail::ProtWritable(s.protect)) continue;
       const DWORD modifiers = s.protect & (PAGE_NOCACHE | PAGE_WRITECOMBINE);
       const DWORD wanted = (detail::ProtExecutable(s.protect) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE) | modifiers;
@@ -200,7 +204,7 @@ bool WriteRaw(uintptr_t addr, const void* in, size_t size) {
         restore();
         return false;
       }
-      changed.push_back({s.begin, s.size, old});
+      changed[changedCount++] = {s.begin, s.size, old};
     }
   }
 

@@ -554,7 +554,9 @@ class HexViewWindow final : public Window, public HexViewTarget, public tools::D
       }
     }
 
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered()) {
+    // hoveredIdx >= 0 already means a row of this grid is hovered. IsWindowHovered() would be
+    // false here: the row's InvisibleButton turns active on the very press being handled.
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
       if (io.KeyCtrl) {
         FollowPointerAt(a);
         return;
@@ -568,7 +570,7 @@ class HexViewWindow final : public Window, public HexViewTarget, public tools::D
     } else if (dragging_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       cursor_ = a;
     }
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && ImGui::IsWindowHovered()) {
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
       if (!InSel(a)) {
         anchor_ = cursor_ = a;
         hasSel_ = true;

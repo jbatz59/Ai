@@ -48,7 +48,8 @@ bool SetTimeScale(float scale);
 namespace camera {
 std::optional<Mat4> ViewProjection();              // Camera.ViewProjection
 std::optional<Vec3> Position();                    // Camera.Position
-std::optional<Vec3> Forward();                     // derived from the view-projection matrix
+std::optional<Vec3> Forward();                     // Camera.View third column (m[0][2], m[1][2], m[2][2]) normalised
+                                                   // (View transposed first when Camera.MatrixTransposed == 1)
 std::optional<float> Fov();                        // Camera.Fov (degrees)
 bool SetFov(float degrees);
 }  // namespace camera

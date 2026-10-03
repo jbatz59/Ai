@@ -70,6 +70,7 @@ constexpr PageInfo kPages[] = {
     {Page::Teleport, "Teleport", "teleport", CG_ICON_TELEPORT, static_cast<int>(Category::Teleport), "Saved places and quick travel."},
     {Page::Camera, "Camera", "camera", CG_ICON_CAMERA, static_cast<int>(Category::Camera), "Field of view, free camera and photo tools."},
     {Page::Visuals, "Visuals", "visuals", CG_ICON_VISUALS, static_cast<int>(Category::Visuals), "Overlays drawn on top of the world."},
+    {Page::Fun, "Fun & Chaos", "fun", CG_ICON_LIGHTNING, static_cast<int>(Category::Fun), "Film reels, headlines, rewind and chaos mode."},
     {Page::CheatTable, "Cheat Table", "cheat_table", CG_ICON_TABLE, static_cast<int>(Category::CheatTable),
      "Data-driven cheats declared in the bindings files."},
     {Page::Scripts, "Scripts", "scripts", CG_ICON_SCRIPT, kNoCategory, "Your Lua scripts, their menu entries and panels."},
@@ -1266,9 +1267,9 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
 
   item(Page::Home);
   group("GAMEPLAY");
-  for (Page pg : {Page::Player, Page::Vehicle, Page::Weapons, Page::World, Page::Teleport, Page::Camera, Page::Visuals, Page::CheatTable}) item(pg);
+  for (Page pg : {Page::Player, Page::Vehicle, Page::Weapons, Page::World, Page::Teleport, Page::Camera, Page::Visuals, Page::Fun, Page::CheatTable}) item(pg);
   group("EXTEND");
-  item(Page::Scripts);
+  // Scripts page hidden: user Lua scripting is not part of this release.
   item(Page::Tools);
   group("CONSIGLIERE");
   item(Page::Settings);

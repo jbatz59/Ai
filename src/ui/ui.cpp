@@ -302,12 +302,9 @@ void Init() {
   using Factory = std::unique_ptr<Window> (*)();
   static constexpr std::pair<const char*, Factory> kFactories[] = {
       {"tools.scanner", &MakeScannerWindow},           {"tools.hexview", &MakeHexViewWindow},
-      {"tools.rtti", &MakeRttiBrowserWindow},          {"tools.struct", &MakeStructDissectorWindow},
-      {"tools.breakpoints", &MakeBreakpointWindow},    {"tools.addresstable", &MakeAddressTableWindow},
-      {"tools.bindings", &MakeBindingsWindow},         {"tools.hooks", &MakeHooksPatchesWindow},
+      {"tools.addresstable", &MakeAddressTableWindow},   {"tools.bindings", &MakeBindingsWindow},
       {"tools.signature", &MakeSignatureWindow},       {"tools.log", &MakeLogConsoleWindow},
-      {"tools.scriptconsole", &MakeScriptConsoleWindow}, {"tools.gamelua", &MakeGameLuaConsoleWindow},
-      {"tools.modules", &MakeModulesWindow},
+      {"tools.gamelua", &MakeGameLuaConsoleWindow},    {"tools.modules", &MakeModulesWindow},
   };
   for (const auto& [name, make] : kFactories) {
     try {
