@@ -24,3 +24,9 @@ Full license texts are next to each library.
   functions exist (GetActivePlayer, SetDemigod, InventorySetUnlimitedAmmo, police, weather, vehicle calls).
 
 No code, patterns, offsets or layouts from MafiaHub/MafiaMP (restrictive license) were used.
+
+## Lua-Tools-MafiaDE (hurfy)
+
+Vehicle model and weapon identifiers in `src/features/catalog.h` come from the data tables of
+hurfy's Lua-Tools-MafiaDE (`Data/vehiclesData.lua`, `Data/weaponsData.lua`). Only the factual
+game identifiers are used; display names and grouping are Chroma's.

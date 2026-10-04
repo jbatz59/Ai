@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/util.h"
+#include "features/catalog.h"
 #include "features/feature.h"
 #include "features/game_lua.h"
 #include "game/script_vm.h"
@@ -196,15 +197,26 @@ class Customize : public Feature {
 class Spawn : public Feature {
  public:
   Spawn() : Feature("vehicle.spawn", "Spawn vehicle", Category::Vehicle, Kind::Panel,
-                    "Spawns a vehicle by model name through the game's debug console module (carpls).") {}
+                    "Pick any car from the list: click to select, double-click (or Spawn) to drop it next to you.") {}
   std::vector<std::string> Requires() const override { return {"vm"}; }
   bool HasSettings() const override { return true; }
   void DrawSettings() override {
-    ImGui::SetNextItemWidth(-90);
-    const bool enter = ImGui::InputTextWithHint("##model", "model name", name_, sizeof(name_), ImGuiInputTextFlags_EnterReturnsTrue);
+    const bool now = DrawCatalog("##cars", kVehicles, name_, sizeof(name_), filter_, sizeof(filter_), 8.0f);
+    const std::string label = name_[0] ? "Spawn " + Display(name_) : std::string("Spawn");
+    if (!name_[0]) ImGui::BeginDisabled();
+    if (ImGui::Button(label.c_str()) || (now && name_[0])) Go();
+    if (!name_[0]) ImGui::EndDisabled();
     ImGui::SameLine();
-    if ((ImGui::Button("Spawn") || enter) && name_[0]) Go();
+    if (ImGui::Button("Add to favourites") && name_[0] && std::find(favs_.begin(), favs_.end(), name_) == favs_.end())
+      favs_.push_back(name_);
     if (Favourites(name_, sizeof(name_), favs_)) Go();
+    if (ImGui::TreeNode("Custom model name")) {
+      ImGui::SetNextItemWidth(-90);
+      const bool enter = ImGui::InputTextWithHint("##model", "model name", name_, sizeof(name_), ImGuiInputTextFlags_EnterReturnsTrue);
+      ImGui::SameLine();
+      if ((ImGui::Button("Spawn##custom") || enter) && name_[0]) Go();
+      ImGui::TreePop();
+    }
   }
   void SaveExtra(nlohmann::json& j) const override { j = {{"name", name_}, {"favourites", favs_}}; }
   void LoadExtra(const nlohmann::json& j) override {
@@ -219,12 +231,17 @@ local m = CG.get("package", "loaded", "common.base.game_structure_console")
 if type(m) ~= "table" then m = CG.get("package", "loaded", "common", "base", "game_structure_console") end
 if type(m) ~= "table" or type(m.carpls) ~= "function" then error("vehicle spawner (carpls) not available on this build", 0) end
 CG.must(CG.try(m.carpls, name)))",
-                Name(), [n = std::string(name_)](const game::vm::Result& r) {
+                Name(), [n = Display(name_)](const game::vm::Result& r) {
                   if (r.ok) nt::Push(nt::Kind::Success, "Spawned", n);
                 });
   }
+  static std::string Display(const std::string& id) {
+    const std::string n = CatalogName(kVehicles, id);
+    return n.empty() ? id : n;
+  }
   Runner runner_;
   char name_[128] = {};
+  char filter_[64] = {};
   std::vector<std::string> favs_;
 };
 

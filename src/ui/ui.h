@@ -38,7 +38,7 @@ inline Window* FindWindowW(const std::string& id) { return FindWindow(id); }
 #pragma pop_macro("FindWindow")
 const std::vector<std::unique_ptr<Window>>& Windows();
 void OpenWindow(const std::string& id);   // also focuses it
-void OpenMenuPage(std::string_view key);   // e.g. "vehicle"; unknown keys are ignored
+void OpenMenuPage(std::string_view key, std::string_view filter = {});   // e.g. "vehicle"; unknown keys are ignored
 
 // Cross-tool navigation (e.g. scanner result -> hex view / breakpoint / address table).
 void GotoHexView(uintptr_t address);

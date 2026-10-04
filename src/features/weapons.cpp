@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/util.h"
+#include "features/catalog.h"
 #include "features/feature.h"
 #include "features/game_lua.h"
 #include "game/script_vm.h"
@@ -134,19 +135,28 @@ class Grenades : public ScriptAction {
 class GiveWeapon : public Feature {
  public:
   GiveWeapon() : Feature("weapons.give", "Give weapon", Category::Weapons, Kind::Panel,
-                         "Adds a weapon by its script name and selects it. \"Remember current\" stores the weapon in hand.") {}
+                         "Pick any weapon from the list: click to select, double-click (or Give) to equip it.") {}
   std::vector<std::string> Requires() const override { return {"vm"}; }
   bool HasSettings() const override { return true; }
   void DrawSettings() override {
-    ImGui::SetNextItemWidth(-90);
-    const bool enter = ImGui::InputTextWithHint("##weapon", "weapon name", name_, sizeof(name_), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if ((ImGui::Button("Give") || enter) && name_[0]) Give();
+    const bool now = DrawCatalog("##weapons", kWeapons, name_, sizeof(name_), filter_, sizeof(filter_), 7.0f);
     ImGui::SetNextItemWidth(160);
     ImGui::SliderInt("Ammo", &ammo_, 0, 999);
+    const std::string label = name_[0] ? "Give " + Display(name_) : std::string("Give");
+    if (!name_[0]) ImGui::BeginDisabled();
+    if (ImGui::Button(label.c_str()) || (now && name_[0])) Give();
+    if (!name_[0]) ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Remember current")) Remember();
+    if (ImGui::Button("Give all weapons")) GiveAll();
     if (Favourites(name_, sizeof(name_), favs_)) Give();
+    if (ImGui::TreeNode("Custom weapon name")) {
+      ImGui::SetNextItemWidth(-90);
+      const bool enter = ImGui::InputTextWithHint("##weapon", "weapon name", name_, sizeof(name_), ImGuiInputTextFlags_EnterReturnsTrue);
+      ImGui::SameLine();
+      if ((ImGui::Button("Give##custom") || enter) && name_[0]) Give();
+      if (ImGui::Button("Remember current")) Remember();
+      ImGui::TreePop();
+    }
   }
   void SaveExtra(nlohmann::json& j) const override { j = {{"name", name_}, {"ammo", ammo_}, {"favourites", favs_}}; }
   void LoadExtra(const nlohmann::json& j) override {
@@ -160,10 +170,27 @@ class GiveWeapon : public Feature {
     const std::string q = LuaQuote(name_);
     runner_.Run("local p = CG.need(CG.player())\nCG.must(CG.call(p, \"InventoryAddWeapon\", " + q + ", " + LuaNumber(ammo_) +
                     "))\nCG.call(p, \"InventorySelect\", " + q + ", true)",
-                Name(), [n = std::string(name_)](const game::vm::Result& r) {
+                Name(), [n = Display(name_)](const game::vm::Result& r) {
                   if (r.ok) nt::Push(nt::Kind::Success, "Weapon added", n);
                 });
   }
+  // Every regular weapon (the developer-only entry is skipped); one chunk, failures per item ignored.
+  void GiveAll() {
+    std::string code = "local p = CG.need(CG.player())\nlocal n = 0\n";
+    for (const CatalogItem& w : kWeapons) {
+      if (std::string_view(w.group).find("Developer") != std::string_view::npos) continue;
+      code += "if CG.call(p, \"InventoryAddWeapon\", " + LuaQuote(w.id) + ", " + LuaNumber(ammo_) + ") then n = n + 1 end\n";
+    }
+    code += "if n == 0 then error(\"no weapon could be added\", 0) end";
+    runner_.Run(std::move(code), Name(), [](const game::vm::Result& r) {
+      if (r.ok) nt::Push(nt::Kind::Success, "Weapons", "Every weapon added");
+    });
+  }
+  static std::string Display(const std::string& id) {
+    const std::string n = CatalogName(kWeapons, id);
+    return n.empty() ? id : n;
+  }
+  char filter_[64] = {};
   void Remember() {
     if (!game::vm::HasReturnValues()) {
       nt::Push(nt::Kind::Warning, "Remember current", "Return values need the Lua.PushCClosure/SetField/CheckLString bindings");

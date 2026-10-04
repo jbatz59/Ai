@@ -1519,6 +1519,11 @@ const char* PageName(Page p) { return Info(p).name; }
 const char* PageKey(Page p) { return Info(p).key; }
 const char* PageIcon(Page p) { return Info(p).icon; }
 
+void SetPageFilter(Page p, std::string_view text) {
+  auto& buf = g_menu.search[static_cast<size_t>(p)];
+  std::snprintf(buf.data(), buf.size(), "%.*s", static_cast<int>(text.size()), text.data());
+}
+
 std::optional<Page> PageFromKey(std::string_view key) {
   for (const PageInfo& info : kPages)
     if (util::IEquals(key, info.key)) return info.page;

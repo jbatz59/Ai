@@ -22,6 +22,7 @@ const char* PageName(Page p);    // "Cheat Table"
 const char* PageKey(Page p);     // stable config value: "cheat_table"
 const char* PageIcon(Page p);    // CG_ICON_*
 std::optional<Page> PageFromKey(std::string_view key);
+void SetPageFilter(Page p, std::string_view text);
 std::optional<features::Category> PageCategory(Page p);   // category pages only
 Page PageForCategory(features::Category c);                // Scripts category -> Scripts page
 

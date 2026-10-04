@@ -259,8 +259,11 @@ Window* FindWindow(const std::string& id) {
 
 const std::vector<std::unique_ptr<Window>>& Windows() { return g_windows; }
 
-void OpenMenuPage(std::string_view key) {
-  if (const auto page = detail::PageFromKey(key)) detail::NavigateTo(*page);
+void OpenMenuPage(std::string_view key, std::string_view filter) {
+  if (const auto page = detail::PageFromKey(key)) {
+    detail::NavigateTo(*page);
+    if (!filter.empty()) detail::SetPageFilter(*page, filter);
+  }
 }
 
 void OpenWindow(const std::string& id) {

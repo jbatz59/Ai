@@ -244,7 +244,7 @@ bool InitFor(IDXGISwapChain* sc) {
   script::Engine::Get().Init();
 
   if (EnvW(L"CHROMA_TEST_OPEN_MENU") == L"1") SetMenuOpen(true);
-  if (const std::wstring page = EnvW(L"CHROMA_TEST_PAGE"); !page.empty()) ui::OpenMenuPage(util::Narrow(page));
+  if (const std::wstring page = EnvW(L"CHROMA_TEST_PAGE"); !page.empty()) ui::OpenMenuPage(util::Narrow(page), util::Narrow(EnvW(L"CHROMA_TEST_FILTER")));
   ui::notify::Push(ui::notify::Kind::Success, "Chroma loaded", "Press " + g.menuKey.ToString() + " to open the menu");
   log::Info("render", "Overlay initialised on HWND {} (scale {:.2f})", static_cast<void*>(desc.OutputWindow), scale);
   return true;
