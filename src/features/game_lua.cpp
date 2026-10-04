@@ -130,6 +130,33 @@ function CG.vec(x, y, z)
   return v
 end
 
+function CG.flatdir(d)
+  if d == nil then return nil end
+  local ok, x, y = pcall(function() return d.x, d.y end)
+  if not ok or type(x) ~= "number" or type(y) ~= "number" then return nil end
+  local l = math.sqrt(x * x + y * y)
+  if l < 0.001 then return nil end
+  return x / l, y / l
+end
+
+function CG.forward(o)
+  local cm = CG.get("game", "cameramanager")
+  if cm ~= nil then
+    local okc, cam = CG.call(cm, "GetPlayerCamera")
+    if okc and cam ~= nil then
+      local okd, d = CG.call(cam, "GetDir")
+      local x, y = CG.flatdir(okd and d or nil)
+      if x then return x, y end
+    end
+  end
+  if o ~= nil then
+    local okd, d = CG.call(o, "GetDir")
+    local x, y = CG.flatdir(okd and d or nil)
+    if x then return x, y end
+  end
+  return 0, 1
+end
+
 rawset(G, "CG", CG)
 )lua";
 

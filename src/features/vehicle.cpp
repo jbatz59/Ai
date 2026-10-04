@@ -39,11 +39,13 @@ class Runner {
   std::shared_ptr<uint64_t> start_ = std::make_shared<uint64_t>(0);
 };
 
-// Script toggle: `on` at enable (re-applied every `period` s when > 0), `off` at disable.
+// Script toggle: `on` at enable, then `tick` (default: `on`) every `period` s when > 0, `off` at disable.
 class ScriptToggle : public Feature {
  public:
-  ScriptToggle(std::string id, std::string name, Category c, std::string desc, std::string on, std::string off, float period)
-      : Feature(std::move(id), std::move(name), c, Kind::Toggle, std::move(desc)), on_(std::move(on)), off_(std::move(off)), period_(period) {}
+  ScriptToggle(std::string id, std::string name, Category c, std::string desc, std::string on, std::string off, float period,
+               std::string tick = {})
+      : Feature(std::move(id), std::move(name), c, Kind::Toggle, std::move(desc)), on_(std::move(on)), off_(std::move(off)),
+        tick_(tick.empty() ? on_ : std::move(tick)), period_(period) {}
   std::vector<std::string> Requires() const override { return {"vm"}; }
   void OnEnable() override {
     timer_ = 0;
@@ -55,14 +57,14 @@ class ScriptToggle : public Feature {
   void Tick(float dt) override {
     if (period_ <= 0 || (timer_ += dt) < period_) return;
     timer_ = 0;
-    runner_.Run(on_, Name(), {}, false);
+    runner_.Run(tick_, Name(), {}, false);
   }
 
  protected:
   Runner runner_;
 
  private:
-  std::string on_, off_;
+  std::string on_, off_, tick_;
   float period_, timer_ = 0;
 };
 
@@ -134,83 +136,60 @@ class Boost : public ScriptAction {
 class Customize : public Feature {
  public:
   Customize() : Feature("vehicle.customize", "Customize", Category::Vehicle, Kind::Panel,
-                        "Paint, window tint, licence plate, dirt/rust, fuel and switches of the current vehicle.") {}
+                        "Paint, wheels, window tint, plate, dirt/rust, fuel, lights and siren of the current vehicle.") {}
   std::vector<std::string> Requires() const override { return {"vm"}; }
   bool HasSettings() const override { return true; }
   void DrawSettings() override {
-    ImGui::ColorEdit3("Primary", c1_, ImGuiColorEditFlags_NoInputs);
-    ImGui::SameLine();
-    ImGui::ColorEdit3("Secondary", c2_, ImGuiColorEditFlags_NoInputs);
-    ImGui::SameLine();
-    if (ImGui::Button("Paint")) Send(V("CG.must(CG.call(v, \"SetColor\", col(" + Col(c1_) + "), col(" + Col(c2_) + ")))"));
+    // The game takes palette IDs (paint/wheels 1-42, tint 1-10), not RGB; sliders apply on release.
+    if (Slider("Paint", &paint_, 1, 42)) Send(V("CG.must(CG.call(v, \"SetColor\", " + Num(paint_) + ", " + Num(paint2_) + "))"));
+    if (Slider("Second paint", &paint2_, 1, 42)) Send(V("CG.must(CG.call(v, \"SetColor\", " + Num(paint_) + ", " + Num(paint2_) + "))"));
+    if (Slider("Wheels", &wheels_, 1, 42)) Send(V("CG.must(CG.call(v, \"SetWheelColor\", " + Num(wheels_) + ", " + Num(wheels_) + "))"));
+    if (Slider("Window tint", &tint_, 1, 10)) Send(V("CG.must(CG.call(v, \"SetWindowTint\", " + Num(tint_) + "))"));
     ImGui::SetNextItemWidth(160);
-    ImGui::SliderInt("Window tint", &tint_, 0, 100);
-    ImGui::SameLine();
-    if (ImGui::Button("Tint")) Send(V("CG.must(CG.call(v, \"SetWindowTint\", " + LuaNumber(tint_) + "))"));
-    ImGui::SetNextItemWidth(160);
-    ImGui::InputText("Plate", plate_, sizeof(plate_));
+    ImGui::InputText("##plate", plate_, sizeof(plate_));
     ImGui::SameLine();
     if (ImGui::Button("Set plate")) Send(V("CG.must(CG.call(v, \"SetSPZText\", " + LuaQuote(plate_) + ", true))"));
-    ImGui::SetNextItemWidth(120);
-    ImGui::SliderFloat("Dirt", &dirt_, 0.f, 1.f, "%.2f");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(120);
-    ImGui::SliderFloat("Rust", &rust_, 0.f, 1.f, "%.2f");
-    ImGui::SameLine();
-    if (ImGui::Button("Weather it"))
-      Send(V("CG.call(v, \"SetDirty\", " + LuaNumber(dirt_) + ")\nCG.must(CG.call(v, \"SetRust\", " + LuaNumber(rust_) + "))"));
     ImGui::SetNextItemWidth(160);
-    ImGui::SliderFloat("Fuel", &fuel_, 0.f, 100.f, "%.0f");
+    ImGui::SliderFloat("Dirt", &dirt_, 0.f, 1.f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) Send(V("CG.must(CG.call(v, \"SetDirty\", " + LuaNumber(dirt_) + "))"));
+    ImGui::SetNextItemWidth(160);
+    ImGui::SliderFloat("Rust", &rust_, 0.f, 1.f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) Send(V("CG.must(CG.call(v, \"SetRust\", " + LuaNumber(rust_) + "))"));
+    if (ImGui::Button("Clean")) Send(V("CG.call(v, \"SetDirty\", 0)\nCG.must(CG.call(v, \"SetRust\", 0))"));
     ImGui::SameLine();
-    if (ImGui::Button("Fill")) Send(V("CG.must(CG.call(v, \"SetActualFuel\", " + LuaNumber(fuel_) + "))"));
-    if (ImGui::Button("Engine on")) Send(V("CG.must(CG.call(v, \"SetEngineOn\", true, true))"));
+    if (ImGui::Button("Fill tank")) Send(V("CG.must(CG.call(v, \"SetActualFuel\", 100))"));
     ImGui::SameLine();
-    if (ImGui::Button("Engine off")) Send(V("CG.must(CG.call(v, \"SetEngineOn\", false, false))"));
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Lights", &lights_)) Send(V(std::string("CG.must(CG.call(v, \"SetLightState\", ") + LuaBool(lights_) + ", true))"));
+    if (ImGui::Button("Engine on/off"))
+      Send(V("local ok, on = CG.call(v, \"IsEngineOn\")\nlocal s = not (ok and on)\nCG.must(CG.call(v, \"SetEngineOn\", s, s))"));
+    if (ImGui::Checkbox("Lights", &lights_)) Send(V(std::string("CG.must(CG.call(v, \"SetLightState\", true, ") + LuaBool(lights_) + "))"));
     ImGui::SameLine();
     if (ImGui::Checkbox("Siren", &siren_)) Send(V(std::string("CG.must(CG.call(v, \"SetSirenOn\", ") + LuaBool(siren_) + "))"));
-    ImGui::SameLine();
-    if (ImGui::Button("Kill engine")) Send(V("CG.must(CG.call(v, \"SetMotorDamage\", 1))"));
   }
   void SaveExtra(nlohmann::json& j) const override {
-    j = {{"c1", {c1_[0], c1_[1], c1_[2]}}, {"c2", {c2_[0], c2_[1], c2_[2]}}, {"tint", tint_}, {"plate", plate_},
-         {"dirt", dirt_}, {"rust", rust_}, {"fuel", fuel_}};
+    j = {{"paint", paint_}, {"paint2", paint2_}, {"wheels", wheels_}, {"tint", tint_}, {"plate", plate_}, {"dirt", dirt_}, {"rust", rust_}};
   }
   void LoadExtra(const nlohmann::json& j) override {
-    for (int i = 0; i < 3; ++i) {
-      if (j.contains("c1") && j["c1"].size() == 3) c1_[i] = j["c1"][i].get<float>();
-      if (j.contains("c2") && j["c2"].size() == 3) c2_[i] = j["c2"][i].get<float>();
-    }
-    tint_ = j.value("tint", tint_);
+    paint_ = std::clamp(j.value("paint", paint_), 1, 42);
+    paint2_ = std::clamp(j.value("paint2", paint2_), 1, 42);
+    wheels_ = std::clamp(j.value("wheels", wheels_), 1, 42);
+    tint_ = std::clamp(j.value("tint", tint_), 1, 10);
     SetBuf(plate_, sizeof(plate_), j.value("plate", std::string(plate_)));
-    dirt_ = j.value("dirt", dirt_);
-    rust_ = j.value("rust", rust_);
-    fuel_ = j.value("fuel", fuel_);
+    dirt_ = std::clamp(j.value("dirt", dirt_), 0.f, 1.f);
+    rust_ = std::clamp(j.value("rust", rust_), 0.f, 1.f);
   }
 
  private:
-  static std::string Col(const float* c) {
-    return LuaNumber(static_cast<int>(c[0] * 255.f + .5f)) + ", " + LuaNumber(static_cast<int>(c[1] * 255.f + .5f)) + ", " +
-           LuaNumber(static_cast<int>(c[2] * 255.f + .5f));
+  static std::string Num(int v) { return LuaNumber(v); }
+  static bool Slider(const char* label, int* v, int lo, int hi) {
+    ImGui::SetNextItemWidth(160);
+    ImGui::SliderInt(label, v, lo, hi);
+    return ImGui::IsItemDeactivatedAfterEdit();
   }
-  void Send(std::string code) {
-    // col(r, g, b): Math:newColor (0..255) where it exists, else a 0..1 vector.
-    runner_.Run(R"(local function col(r, g, b)
-  if Math and Math.newColor then
-    local ok, c = CG.try(Math.newColor, Math, r, g, b, 255)
-    if ok and c ~= nil then return c end
-  end
-  return CG.vec(r / 255, g / 255, b / 255)
-end
-)" + code,
-                Name());
-  }
+  void Send(std::string code) { runner_.Run(std::move(code), Name()); }
   Runner runner_;
-  float c1_[3] = {0.08f, 0.08f, 0.09f}, c2_[3] = {0.55f, 0.45f, 0.25f};
-  int tint_ = 0;
+  int paint_ = 1, paint2_ = 1, wheels_ = 1, tint_ = 1;
   char plate_[16] = "CG-1931";
-  float dirt_ = 0, rust_ = 0, fuel_ = 100;
+  float dirt_ = 0, rust_ = 0;
   bool lights_ = false, siren_ = false;
 };
 
@@ -254,14 +233,19 @@ CG.must(CG.try(m.carpls, name)))",
 void RegisterVehicleFeatures(Registry& r) {
   r.Add(std::make_unique<ScriptAction>("vehicle.repair", "Repair", Category::Vehicle, "Fully repairs the current vehicle.",
                                        V("CG.must(CG.call(v, \"Repair\", true))")));
+  // Repair(true) resets the car (it visibly freezes for a moment), so it only runs once when switched on;
+  // every second after that only explosions stay off and the engine is kept healthy (no reset).
   r.Add(std::make_unique<ScriptToggle>("vehicle.indestructible", "Indestructible", Category::Vehicle,
-                                       "No explosions; repaired every second.",
-                                       V("CG.call(v, \"DisableExplosion\", true)\nCG.must(CG.call(v, \"Repair\", true))"),
-                                       "local v = CG.vehicle()\nif v then CG.call(v, \"DisableExplosion\", false) end", 1.f));
+                                       "Can't explode and the engine never dies. Dents stay; use Repair to clean them.",
+                                       "local v = CG.vehicle()\nif v then\n  CG.call(v, \"DisableExplosion\", true)\n"
+                                       "  CG.call(v, \"SetMotorDamage\", 0)\n  CG.call(v, \"Repair\", true)\nend",
+                                       "local v = CG.vehicle()\nif v then CG.call(v, \"DisableExplosion\", false) end", 1.f,
+                                       "local v = CG.vehicle()\nif v then\n  CG.call(v, \"DisableExplosion\", true)\n"
+                                       "  CG.call(v, \"SetMotorDamage\", 0)\nend"));
   r.Add(std::make_unique<Boost>());
   r.Add(std::make_unique<ScriptToggle>("vehicle.keep", "Keep vehicle", Category::Vehicle,
-                                       "The current vehicle never despawns.",
-                                       V("CG.must(CG.call(v, \"SetDespawnImmunity\", true))"),
+                                       "Whatever you drive never despawns. Works on foot too: it applies when you get in.",
+                                       "local v = CG.vehicle()\nif v then CG.must(CG.call(v, \"SetDespawnImmunity\", true)) end",
                                        "local v = CG.vehicle()\nif v then CG.call(v, \"SetDespawnImmunity\", false) end", 5.f));
   r.Add(std::make_unique<Customize>());
   r.Add(std::make_unique<Spawn>());

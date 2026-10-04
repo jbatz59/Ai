@@ -259,6 +259,10 @@ Window* FindWindow(const std::string& id) {
 
 const std::vector<std::unique_ptr<Window>>& Windows() { return g_windows; }
 
+void OpenMenuPage(std::string_view key) {
+  if (const auto page = detail::PageFromKey(key)) detail::NavigateTo(*page);
+}
+
 void OpenWindow(const std::string& id) {
   Window* w = FindWindow(id);
   if (w == nullptr) {
@@ -399,7 +403,6 @@ const ShellSettings& Settings() {
     ShellSettings s;
     s.hudWatermark = cfg.ReadBool(kCfgHudWatermark, true);
     s.hudFps = cfg.ReadBool(kCfgHudFps, false);
-    s.hudActive = cfg.ReadBool(kCfgHudActive, true);
     s.hudPosition = cfg.ReadBool(kCfgHudPosition, false);
     s.notifications = cfg.ReadBool(kCfgNotifications, true);
     s.menuKey = Hotkey::Parse(cfg.ReadString(kCfgMenuKey, DefaultMenuKey().ToString()));

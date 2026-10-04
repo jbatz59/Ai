@@ -28,7 +28,6 @@ namespace th = render::theme;
 constexpr double kWatermarkAfterInject = 8.0;   // seconds
 constexpr double kWatermarkAfterClose = 3.0;
 constexpr double kFadeSeconds = 1.2;
-constexpr size_t kMaxActiveLines = 14;
 
 bool g_lastMenuOpen = false;
 double g_watermarkUntil = kWatermarkAfterInject;
@@ -147,22 +146,6 @@ void DrawHud() {
                     static_cast<double>(g_position->z));
       const ImVec2 size = DrawBlock(dl, cursor, {{buf, th::U32(p.text), mono, monoSize}}, 1.0f, false, s);
       cursor.y += size.y + blockGap;
-    }
-  }
-
-  if (st.hudActive) {
-    std::vector<const features::Feature*> active;
-    for (const auto& f : features::Registry::Get().All())
-      if (f && f->GetKind() == features::Kind::Toggle && f->Enabled()) active.push_back(f.get());
-    if (!active.empty()) {
-      std::sort(active.begin(), active.end(), [](const features::Feature* a, const features::Feature* b) { return a->Name() < b->Name(); });
-      std::vector<Line> lines;
-      lines.push_back({"ACTIVE", th::U32(p.accent), bold, fs * 0.78f});
-      for (size_t i = 0; i < active.size() && i < kMaxActiveLines; ++i) lines.push_back({active[i]->Name(), th::U32(p.text), body, fs * 0.92f});
-      if (active.size() > kMaxActiveLines) {
-        lines.push_back({"+" + std::to_string(active.size() - kMaxActiveLines) + " more", th::U32(p.textFaint), body, fs * 0.85f});
-      }
-      DrawBlock(dl, ImVec2(vp->WorkPos.x + vp->WorkSize.x - 14.0f * s, vp->WorkPos.y + 12.0f * s), lines, 1.0f, true, s);
     }
   }
 }

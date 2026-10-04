@@ -148,7 +148,9 @@ class ScriptOrMemorySlider : public Feature {
       if (!memSet(v)) nt::Push(nt::Kind::Warning, name, std::string("Script VM not ready and ") + memSym_ + " unavailable");
       return;
     }
-    runner_.Run(Gfx(method_, LuaNumber(v)), name, [v, memSet, name](const game::vm::Result& r) {
+    // SetTime takes (hours, transition); SetTimeFlowSpeed takes one value (engine signatures).
+    const std::string args = std::string(method_) == "SetTime" ? LuaNumber(v) + ", 0" : LuaNumber(v);
+    runner_.Run(Gfx(method_, args), name, [v, memSet, name](const game::vm::Result& r) {
       if (!r.ok && !memSet(v)) nt::Push(nt::Kind::Error, name + " failed", r.error);
     }, false);
   }

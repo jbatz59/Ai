@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include "core/config.h"
 
@@ -156,8 +157,31 @@ PresetDef MakeIOS() {
   return {p, true};
 }
 
+// Neon Glass: deep navy glass, violet accent; gradients run violet -> cyan -> pink.
+PresetDef MakeNeon() {
+  Palette p{};
+  p.bg = Rgb(0x0A0C18, 0.92f);
+  p.bgAlt = Rgb(0x0E1124, 0.94f);
+  p.panel = Rgb(0x151933, 0.78f);
+  p.panelHover = Rgb(0x1E2346);
+  p.border = Rgb(0x2A3062);
+  p.text = Rgb(0xF2F3FF);
+  p.textDim = Rgb(0xA7ACD9);
+  p.textFaint = Rgb(0x666D9C);
+  p.accent = Rgb(0x8B5CF6);
+  p.accentHover = Rgb(0xA78BFA);
+  p.accentActive = Rgb(0x7C3AED);
+  p.accentDim = Rgb(0x3B2C7A);
+  p.danger = Rgb(0xFB7185);
+  p.warning = Rgb(0xFBBF24);
+  p.success = Rgb(0x34D399);
+  p.info = Rgb(0x22D3EE);
+  return {p, true};
+}
+
 PresetDef Make(Preset p) {
   switch (p) {
+    case Preset::Neon: return MakeNeon();
     case Preset::Midnight: return MakeMidnight();
     case Preset::Bordeaux: return MakeBordeaux();
     case Preset::Light: return MakeLight();
@@ -175,13 +199,14 @@ Preset Sanitize(Preset p) {
     case Preset::Bordeaux:
     case Preset::Light:
     case Preset::Chroma:
-    case Preset::iOS: return p;
+    case Preset::iOS:
+    case Preset::Neon: return p;
   }
   return kDefaultPreset;
 }
 
-Palette g_palette = MakeIOS().pal;
-Preset g_current = Preset::iOS;
+Palette g_palette = MakeNeon().pal;
+Preset g_current = Preset::Neon;
 float g_hue = 0.75f;
 float g_saturation = 0.85f;
 float g_speed = 0.12f;
@@ -349,7 +374,41 @@ void Apply(Preset preset, float uiScale) {
     style.PopupBorderSize = 0;
   }
 
+  if (preset == Preset::Neon) {
+    style.WindowPadding = ImVec2(16, 16);
+    style.FramePadding = ImVec2(12, 8);
+    style.ItemSpacing = ImVec2(10, 10);
+    style.WindowRounding = 18;
+    style.ChildRounding = 14;
+    style.FrameRounding = 10;
+    style.PopupRounding = 14;
+    style.GrabRounding = 10;
+    style.TabRounding = 10;
+    style.ScrollbarSize = 8;
+    style.ScrollbarRounding = 8;
+    style.GrabMinSize = 14;
+    style.WindowBorderSize = 0;   // the animated gradient border replaces it
+    style.ChildBorderSize = 1;
+    style.PopupBorderSize = 1;
+  }
+
   SetColors(style.Colors, def.pal, def.dark);
+  if (preset == Preset::Neon) {
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_FrameBg] = Rgb(0x1A1F3D);
+    c[ImGuiCol_FrameBgHovered] = Rgb(0x242A52);
+    c[ImGuiCol_FrameBgActive] = Rgb(0x2E2766);
+    c[ImGuiCol_Button] = Rgb(0x1F2448);
+    c[ImGuiCol_ButtonHovered] = Rgb(0x352C7A);
+    c[ImGuiCol_ButtonActive] = Rgb(0x4C36A8);
+    c[ImGuiCol_SliderGrab] = Rgb(0xA78BFA);
+    c[ImGuiCol_SliderGrabActive] = Rgb(0x22D3EE);
+    c[ImGuiCol_CheckMark] = Rgb(0x22D3EE);
+    c[ImGuiCol_ScrollbarBg] = Rgb(0x000000, 0.0f);
+    c[ImGuiCol_ScrollbarGrab] = Rgb(0x2A3062);
+    c[ImGuiCol_PopupBg] = Rgb(0x10132A, 0.97f);
+    c[ImGuiCol_Border] = Rgb(0x2A3062, 0.8f);
+  }
   if (preset == Preset::iOS) {
     // Fills and controls follow UIKit: grey fills inside cells, white slider knobs.
     ImVec4* c = style.Colors;
@@ -391,8 +450,9 @@ const char* PresetName(Preset p) {
     case Preset::Light: return "Light";
     case Preset::Chroma: return "Chroma RGB";
     case Preset::iOS: return "iOS";
+    case Preset::Neon: return "Neon Glass";
   }
-  return "iOS";
+  return "Neon Glass";
 }
 
 ImU32 U32(const ImVec4& c, float alphaMul) {
@@ -466,6 +526,105 @@ void DrawChromaBar(ImDrawList* dl, ImVec2 min, ImVec2 max, float alpha) {
     const ImU32 ca = Chroma(a * 0.5f, alpha), cb = Chroma(b * 0.5f, alpha);
     dl->AddRectFilledMultiColor(ImVec2(min.x + w * i, min.y), ImVec2(min.x + w * (i + 1), max.y), ca, cb, cb, ca);
   }
+}
+
+}  // namespace cg::render::theme
+
+namespace cg::render::theme {
+namespace {
+
+float Smooth(float x) { return x * x * (3.0f - 2.0f * x); }
+
+// Outline of a rounded rect, subdivided so straight edges carry the gradient too.
+std::vector<ImVec2> LoopPoints(ImDrawList* dl, ImVec2 min, ImVec2 max, float rounding) {
+  dl->PathRect(min, max, rounding);
+  std::vector<ImVec2> pts(dl->_Path.Data, dl->_Path.Data + dl->_Path.Size);
+  dl->PathClear();
+  if (pts.size() < 2) return {};
+  pts.push_back(pts.front());
+  std::vector<ImVec2> fine;
+  fine.reserve(pts.size() * 4);
+  for (size_t i = 0; i + 1 < pts.size(); ++i) {
+    const ImVec2 a = pts[i], b = pts[i + 1];
+    const float len = std::sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+    const int n = std::max(1, static_cast<int>(len / 10.0f));
+    for (int k = 0; k < n; ++k) {
+      const float t = static_cast<float>(k) / static_cast<float>(n);
+      fine.emplace_back(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+    }
+  }
+  fine.push_back(pts.back());
+  return fine;
+}
+
+}  // namespace
+
+bool NeonActive() { return g_current == Preset::Neon; }
+
+ImU32 Neon(float offset, float alpha) {
+  static const ImVec4 kStops[3] = {Rgb(0x8B5CF6), Rgb(0x22D3EE), Rgb(0xF472B6)};
+  float x = offset + static_cast<float>(ImGui::GetTime()) * 0.06f;
+  x = (x - std::floor(x)) * 3.0f;
+  const int i = std::min(static_cast<int>(x), 2);
+  ImVec4 c = Mix(kStops[i], kStops[(i + 1) % 3], Smooth(x - static_cast<float>(i)));
+  c.w = std::clamp(alpha, 0.0f, 1.0f);
+  return ImGui::ColorConvertFloat4ToU32(c);
+}
+
+void DrawNeonBorder(ImDrawList* dl, ImVec2 min, ImVec2 max, float rounding, float thickness, float alpha) {
+  if (!dl || alpha <= 0.002f) return;
+  const auto pts = LoopPoints(dl, min, max, rounding);
+  if (pts.size() < 2) return;
+  const float total = static_cast<float>(pts.size());
+  for (size_t i = 0; i + 1 < pts.size(); ++i)   // soft glow under the line
+    dl->AddLine(pts[i], pts[i + 1], Neon(static_cast<float>(i) / total, 0.14f * alpha), thickness * 5.0f);
+  for (size_t i = 0; i + 1 < pts.size(); ++i)
+    dl->AddLine(pts[i], pts[i + 1], Neon(static_cast<float>(i) / total, alpha), thickness);
+}
+
+void DrawNeonBar(ImDrawList* dl, ImVec2 min, ImVec2 max, float alpha) {
+  if (!dl || max.x <= min.x) return;
+  constexpr int kSegments = 32;
+  const float w = (max.x - min.x) / kSegments;
+  for (int i = 0; i < kSegments; ++i) {
+    const float a = static_cast<float>(i) / kSegments, b = static_cast<float>(i + 1) / kSegments;
+    const ImU32 ca = Neon(a * 0.6f, alpha), cb = Neon(b * 0.6f, alpha);
+    dl->AddRectFilledMultiColor(ImVec2(min.x + w * i, min.y), ImVec2(min.x + w * (i + 1), max.y), ca, cb, cb, ca);
+  }
+}
+
+void DrawAurora(ImDrawList* dl, ImVec2 min, ImVec2 max, float alpha) {
+  if (!dl || max.x <= min.x || max.y <= min.y) return;
+  const float t = static_cast<float>(ImGui::GetTime());
+  const float w = max.x - min.x, h = max.y - min.y;
+  struct Blob { float fx, fy, sx, sy, phase, radius, color; };
+  static const Blob kBlobs[] = {
+      {0.25f, 0.30f, 0.11f, 0.07f, 0.0f, 0.42f, 0.00f},
+      {0.78f, 0.25f, 0.08f, 0.10f, 2.1f, 0.36f, 0.34f},
+      {0.60f, 0.85f, 0.13f, 0.06f, 4.2f, 0.40f, 0.67f},
+  };
+  dl->PushClipRect(min, max, true);
+  for (const Blob& b : kBlobs) {
+    const ImVec2 c(min.x + w * (b.fx + 0.12f * std::sin(t * b.sx + b.phase)), min.y + h * (b.fy + 0.10f * std::cos(t * b.sy + b.phase)));
+    const float r = std::min(w, h) * b.radius;
+    // Smooth radial gradient: a triangle fan, coloured centre fading to transparent at the rim.
+    constexpr int kSegs = 64;
+    const ImU32 inner = Neon(b.color, 0.16f * alpha), outer = Neon(b.color, 0.0f);
+    const ImVec2 uv = dl->_Data->TexUvWhitePixel;
+    dl->PrimReserve(kSegs * 3, kSegs + 1);
+    const ImDrawIdx base = static_cast<ImDrawIdx>(dl->_VtxCurrentIdx);
+    dl->PrimWriteVtx(c, uv, inner);
+    for (int k = 0; k < kSegs; ++k) {
+      const float ang = static_cast<float>(k) / kSegs * 6.2831853f;
+      dl->PrimWriteVtx(ImVec2(c.x + std::cos(ang) * r, c.y + std::sin(ang) * r), uv, outer);
+    }
+    for (int k = 0; k < kSegs; ++k) {
+      dl->PrimWriteIdx(base);
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(base + 1 + k));
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(base + 1 + (k + 1) % kSegs));
+    }
+  }
+  dl->PopClipRect();
 }
 
 }  // namespace cg::render::theme

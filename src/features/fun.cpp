@@ -595,14 +595,9 @@ class Chaos : public Feature {
 
  private:
   std::string DiscoChunk() {
-    char b[160];
-    unsigned c[6];
-    for (unsigned& x : c) x = static_cast<unsigned>(rng_() % 256);
-    std::snprintf(b, sizeof(b), "%u, %u, %u), col(%u, %u, %u", c[0], c[1], c[2], c[3], c[4], c[5]);
-    return std::string("local v = CG.vehicle()\nif not v then return end\n"
-                       "local function col(r, g, b) if Math and Math.newColor then local ok, c = CG.try(Math.newColor, Math, r, g, b, 255) "
-                       "if ok and c ~= nil then return c end end return CG.vec(r / 255, g / 255, b / 255) end\n"
-                       "CG.call(v, \"SetColor\", col(") + b + "))";
+    // Palette IDs 1-42 (the game's paint takes IDs, not RGB).
+    const int c1 = static_cast<int>(rng_() % 42) + 1, c2 = static_cast<int>(rng_() % 42) + 1;
+    return "local v = CG.vehicle()\nif not v then return end\nCG.call(v, \"SetColor\", " + LuaNumber(c1) + ", " + LuaNumber(c2) + ")";
   }
   void Fire() {
     if (!revert_.empty()) pending_.push_back(revert_);
@@ -621,12 +616,12 @@ class Chaos : public Feature {
         {"THE COPS ARE ON TO YOU", "CG.must(CG.call(CG.get(\"game\", \"police\"), \"Enable\"))", {}, 0, false},
         {"TIME JUMP +6 HOURS",
          "local g = CG.get(\"game\", \"gfx\")\nlocal ok, t = CG.call(g, \"GetTime\")\nif not ok or type(t) ~= \"number\" then t = " +
-             LuaNumber(s.timeOfDay.value_or(12.f)) + " end\nCG.must(CG.call(g, \"SetTime\", (t + 6) % 24))",
+             LuaNumber(s.timeOfDay.value_or(12.f)) + " end\nCG.must(CG.call(g, \"SetTime\", (t + 6) % 24, 0))",
          {}, 0, false},
         {"INVISIBLE MAN", "CG.call(CG.need(CG.player()), \"ShowModel\", false)", "CG.call(CG.need(CG.player()), \"ShowModel\", true)", 10.f, false},
         {"UP, UP AND AWAY",
          "local o = CG.need(CG.target())\nlocal p = CG.must(CG.call(o, \"GetPos\"))\nCG.must(CG.call(o, \"SetPos\", CG.need(CG.vec(p.x + " +
-             LuaNumber(static_cast<int>(rng_() % 21) - 10) + ", p.y + " + LuaNumber(static_cast<int>(rng_() % 21) - 10) + ", p.z + 25))))",
+             LuaNumber(static_cast<int>(rng_() % 21) - 10) + ", p.y + " + LuaNumber(static_cast<int>(rng_() % 21) - 10) + ", p.z + 10))))",
          {}, 0, false},
         {"TRAFFIC JAM", "CG.must(CG.call(CG.get(\"game\", \"traffic\"), \"Populate\", 60))", {}, 0, false},
     };

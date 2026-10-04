@@ -219,6 +219,11 @@ bool InitFor(IDXGISwapChain* sc) {
   dev->Release();   // BindBackends took its own reference
 
   auto& cfg = Config::Get();
+  // One-time move to the Neon Glass redesign (1.1); a theme picked afterwards is kept.
+  if (cfg.ReadInt("ui.theme_rev", 0) < 2) {
+    cfg.WriteInt("ui.theme", static_cast<int>(theme::Preset::Neon));
+    cfg.WriteInt("ui.theme_rev", 2);
+  }
   const float scale = cfg.ReadFloat("ui.scale", AutoScale(desc.OutputWindow));
   theme::Apply(static_cast<theme::Preset>(cfg.ReadInt("ui.theme", static_cast<int>(theme::kDefaultPreset))), scale);
   fonts::Load(scale, g.fonts);
@@ -239,6 +244,7 @@ bool InitFor(IDXGISwapChain* sc) {
   script::Engine::Get().Init();
 
   if (EnvW(L"CHROMA_TEST_OPEN_MENU") == L"1") SetMenuOpen(true);
+  if (const std::wstring page = EnvW(L"CHROMA_TEST_PAGE"); !page.empty()) ui::OpenMenuPage(util::Narrow(page));
   ui::notify::Push(ui::notify::Kind::Success, "Chroma loaded", "Press " + g.menuKey.ToString() + " to open the menu");
   log::Info("render", "Overlay initialised on HWND {} (scale {:.2f})", static_cast<void*>(desc.OutputWindow), scale);
   return true;

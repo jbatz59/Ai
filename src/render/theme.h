@@ -12,9 +12,9 @@ struct Palette {
   ImVec4 danger, warning, success, info;                 // oxblood, amber, green, steel blue
 };
 
-enum class Preset { Noir, Midnight, Bordeaux, Light, Chroma, iOS };
-inline constexpr int kPresetCount = 6;
-inline constexpr Preset kDefaultPreset = Preset::iOS;
+enum class Preset { Noir, Midnight, Bordeaux, Light, Chroma, iOS, Neon };
+inline constexpr int kPresetCount = 7;
+inline constexpr Preset kDefaultPreset = Preset::Neon;
 
 void Apply(Preset preset, float uiScale);
 const Palette& Colors();
@@ -34,5 +34,14 @@ ImU32 Chroma(float offset, float alpha = 1.0f);   // colour at `offset` (0..1) a
 void DrawChromaBorder(ImDrawList* dl, ImVec2 min, ImVec2 max, float rounding, float thickness);
 // Horizontal rainbow gradient bar.
 void DrawChromaBar(ImDrawList* dl, ImVec2 min, ImVec2 max, float alpha = 1.0f);
+
+// ---- Neon Glass (default): animated violet -> cyan -> pink gradient accents ---------------------
+bool NeonActive();
+ImU32 Neon(float offset, float alpha = 1.0f);   // gradient colour at `offset` (0..1), drifting over time
+// Animated gradient outline; `alpha` scales it (cards fade it in on hover).
+void DrawNeonBorder(ImDrawList* dl, ImVec2 min, ImVec2 max, float rounding, float thickness, float alpha = 1.0f);
+void DrawNeonBar(ImDrawList* dl, ImVec2 min, ImVec2 max, float alpha = 1.0f);
+// Soft drifting light blobs behind the menu content (clipped to the rect).
+void DrawAurora(ImDrawList* dl, ImVec2 min, ImVec2 max, float alpha = 1.0f);
 
 }  // namespace cg::render::theme

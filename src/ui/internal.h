@@ -55,7 +55,6 @@ template <class F> void RunGuarded(const char* what, F&& fn) {
 struct ShellSettings {
   bool hudWatermark = true;
   bool hudFps = false;
-  bool hudActive = true;
   bool hudPosition = false;
   bool notifications = true;
   Hotkey menuKey, panicKey, unloadKey;
@@ -70,7 +69,6 @@ inline constexpr const char* kCfgPage = "ui.page";               // string: Page
 inline constexpr const char* kCfgNotifications = "ui.notifications";
 inline constexpr const char* kCfgHudWatermark = "hud.watermark";
 inline constexpr const char* kCfgHudFps = "hud.fps";
-inline constexpr const char* kCfgHudActive = "hud.active";
 inline constexpr const char* kCfgHudPosition = "hud.position";
 inline constexpr const char* kCfgMenuKey = "hotkeys.menu";
 inline constexpr const char* kCfgPanicKey = "hotkeys.panic";

@@ -114,39 +114,9 @@ class ScriptAction : public Feature {
   return out;
 }
 
-class Fov : public Feature {
- public:
-  Fov() : Feature("camera.fov", "Field of view", Category::Camera, Kind::Panel, "Camera FOV in degrees; Lock re-writes it every frame.") {}
-  std::vector<std::string> Requires() const override { return {"Camera.Fov"}; }
-  void Tick(float) override {
-    if (lock_) game::camera::SetFov(fov_);
-  }
-  bool HasSettings() const override { return true; }
-  void DrawSettings() override {
-    const auto cur = game::camera::Fov();
-    ImGui::SetNextItemWidth(-140);
-    if (ImGui::SliderFloat("##fov", &fov_, 30.f, 120.f, "%.0f deg")) game::camera::SetFov(fov_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Lock", &lock_);
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Read") && cur) fov_ = *cur;
-    if (cur) ImGui::TextDisabled("Game: %.1f deg", *cur);
-  }
-  void SaveExtra(nlohmann::json& j) const override { j = {{"fov", fov_}, {"lock", lock_}}; }
-  void LoadExtra(const nlohmann::json& j) override {
-    fov_ = std::clamp(j.value("fov", fov_), 30.f, 120.f);
-    lock_ = j.value("lock", false);
-  }
-
- private:
-  float fov_ = 70.f;
-  bool lock_ = false;
-};
-
 }  // namespace
 
 void RegisterCameraFeatures(Registry& r) {
-  r.Add(std::make_unique<Fov>());
   r.Add(std::make_unique<ScriptToggle>("camera.hide_hud", "Hide HUD", Category::Camera, "Hides the game HUD (cinematic shots).",
                                        "CG.must(CG.call(CG.get(\"game\", \"hud\"), \"Show\", false))",
                                        "CG.must(CG.call(CG.get(\"game\", \"hud\"), \"Show\", true))", 0.f));

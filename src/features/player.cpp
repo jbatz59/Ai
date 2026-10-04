@@ -151,12 +151,7 @@ class Noclip : public Feature {
 local o = CG.need(CG.target())
 local ok, pos = CG.call(o, "GetPos")
 if not ok or not pos then error(pos or "no position", 0) end
-local fx, fy = 0, 1
-local okd, d = CG.call(o, "GetDir")
-if okd and d then
-  local l = math.sqrt(d.x * d.x + d.y * d.y)
-  if l > 0.001 then fx, fy = d.x / l, d.y / l end
-end
+local fx, fy = CG.forward(o)
 CG.must(CG.call(o, "SetPos", CG.need(CG.vec(pos.x + fx * f + fy * r, pos.y + fy * f - fx * r, pos.z + u)))))";
     runner_.Run(std::move(code), Name(), {}, false);
   }

@@ -259,8 +259,9 @@ bool ToggleSwitch(const char* id, bool* v, bool enabled) {
   const auto& p = th::Colors();
   const float frameH = ImGui::GetFrameHeight();
   const bool ios = th::Current() == th::Preset::iOS;
-  const float h = std::round(frameH * (ios ? 0.82f : 0.70f));
-  const float w = std::round(h * (ios ? 1.65f : 1.85f));   // UISwitch proportions: 51 x 31
+  const bool neon = th::NeonActive();
+  const float h = std::round(frameH * (ios || neon ? 0.82f : 0.70f));
+  const float w = std::round(h * (ios || neon ? 1.65f : 1.85f));   // UISwitch proportions: 51 x 31
 
   if (!enabled) ImGui::BeginDisabled();
   const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -285,7 +286,22 @@ bool ToggleSwitch(const char* id, bool* v, bool enabled) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float y = pos.y + (frameH - h) * 0.5f;
     const ImVec2 a(pos.x, y), b(pos.x + w, y + h);
-    if (ios) {
+    if (neon) {
+      // Gradient track that glows when on; the knob slides with the same easing as the track fades.
+      const float r = h * 0.5f;
+      if (t > 0.01f) dl->AddRectFilled(a - ImVec2(3, 3), b + ImVec2(3, 3), th::Neon(0.0f, 0.18f * t * ImGui::GetStyle().Alpha), r + 3.0f);
+      dl->AddRectFilled(a, b, Col(hovered ? p.border : Mix(p.panelHover, p.border, 0.5f)), r);
+      if (t > 0.01f) {
+        const float a1 = t * ImGui::GetStyle().Alpha;
+        dl->AddRectFilled(a, b, th::Neon(0.0f, a1), r);
+        dl->AddRectFilledMultiColor(ImVec2(a.x + r, a.y + 1.0f), ImVec2(b.x - r, b.y - 1.0f), th::Neon(0.0f, 0.0f), th::Neon(0.33f, a1 * 0.9f),
+                                    th::Neon(0.33f, a1 * 0.9f), th::Neon(0.0f, 0.0f));
+      }
+      const float kr = r - std::max(2.0f, h * 0.09f);
+      const ImVec2 c(a.x + r + t * (w - h), y + r);
+      dl->AddCircleFilled(c + ImVec2(0, 1.5f), kr + 0.5f, Col(ImVec4(0, 0, 0, 0.35f)));
+      dl->AddCircleFilled(c, kr, Col(ImVec4(1, 1, 1, hovered ? 0.95f : 1.0f)));
+    } else if (ios) {
       // UISwitch: grey track, green when on, white knob with a soft shadow.
       const ImVec4 off(0.224f, 0.224f, 0.239f, 1.0f);   // #39393D
       dl->AddRectFilled(a, b, Col(Mix(off, p.success, t)), h * 0.5f);
@@ -619,11 +635,15 @@ bool BeginCard(const char* id, ImVec2 size) {
   g_cardHoverKeys.push_back(hoverKey);
 
   const bool ios = th::Current() == th::Preset::iOS;
+  const bool neon = th::NeonActive();
   // iOS grouped cells: no outline, a slightly lighter fill on hover instead.
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, ios ? Mix(p.panel, p.panelHover, hover * 0.6f) : p.panel);
-  ImGui::PushStyleColor(ImGuiCol_Border, Mix(p.border, p.accentDim, hover));
-  ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, (ios ? 12.0f : 8.0f) * s);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ios ? ImVec2(14.0f * s, 11.0f * s) : ImVec2(12.0f * s, 10.0f * s));
+  // Neon: translucent glass that brightens on hover; EndCard adds the gradient outline.
+  const ImVec4 bg = ios ? Mix(p.panel, p.panelHover, hover * 0.6f)
+                        : neon ? WithAlpha(Mix(p.panel, p.panelHover, hover * 0.55f), 0.72f + 0.18f * hover) : p.panel;
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
+  ImGui::PushStyleColor(ImGuiCol_Border, neon ? WithAlpha(p.border, 0.55f * (1.0f - hover)) : Mix(p.border, p.accentDim, hover));
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, (ios || neon ? 12.0f : 8.0f) * s);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ios || neon ? ImVec2(14.0f * s, 11.0f * s) : ImVec2(12.0f * s, 10.0f * s));
   ImGuiChildFlags flags = ImGuiChildFlags_NavFlattened | ImGuiChildFlags_AlwaysUseWindowPadding | (ios ? 0 : ImGuiChildFlags_Borders);
   ImGuiWindowFlags wflags = 0;
   if (size.y == 0.0f) {
@@ -643,7 +663,13 @@ void EndCard() {
   const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
   ImGui::EndChild();
   ImGuiStorage* st = ImGui::GetStateStorage();
-  st->SetFloat(hoverKey, detail::Approach(st->GetFloat(hoverKey, 0.0f), hovered ? 1.0f : 0.0f, 14.0f));
+  const float hover = detail::Approach(st->GetFloat(hoverKey, 0.0f), hovered ? 1.0f : 0.0f, 14.0f);
+  st->SetFloat(hoverKey, hover);
+  if (th::NeonActive() && hover > 0.01f) {
+    const float s = detail::UiScale();
+    th::DrawNeonBorder(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), 12.0f * s, 1.3f * s,
+                       hover * ImGui::GetStyle().Alpha);
+  }
 }
 
 }  // namespace cg::ui

@@ -262,17 +262,15 @@ class Coordinates : public Feature {
 
 class Forward : public Feature {
  public:
-  Forward() : Feature("teleport.forward", "Forward", Category::Teleport, Kind::Action, "Hops forward along the facing direction.") {}
+  Forward() : Feature("teleport.forward", "Forward", Category::Teleport, Kind::Action, "Hops forward the way the camera looks.") {}
   std::vector<std::string> Requires() const override { return {"vm"}; }
   void Activate() override {
     g_tp.Run("local dist = " + LuaNumber(dist_) + R"(
 local o = CG.need(CG.target())
 local ok, pos = CG.call(o, "GetPos")
 if not ok or not pos then error(pos or "no position", 0) end
-local d = CG.must(CG.call(o, "GetDir"))
-local l = math.sqrt(d.x * d.x + d.y * d.y)
-if l < 0.001 then error("no facing direction", 0) end
-CG.must(CG.call(o, "SetPos", CG.need(CG.vec(pos.x + d.x / l * dist, pos.y + d.y / l * dist, pos.z + 0.5)))))",
+local fx, fy = CG.forward(o)
+CG.must(CG.call(o, "SetPos", CG.need(CG.vec(pos.x + fx * dist, pos.y + fy * dist, pos.z + 0.5)))))",
              Name());
   }
   bool HasSettings() const override { return true; }

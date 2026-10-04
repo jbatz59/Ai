@@ -89,7 +89,12 @@ struct MenuState {
   Page page = Page::Home;
   Page shownPage = Page::Count;
   float pageFade = 1.0f;
+  double pageShownAt = 0.0;   // for the staggered card entrance
   float barY = -1.0f;
+  float openT = 1.0f;         // menu open animation 0..1
+  int lastDrawFrame = -10;
+  ImVec2 restPos{};
+  bool haveRestPos = false;
   std::string focusFeature;
   std::string highlightFeature;
   double highlightUntil = 0.0;
@@ -188,6 +193,13 @@ bool LinkButton(const char* label) {
 // ---- iOS-style icon badges ---------------------------------------------------------------------------
 
 bool IosLook() { return th::Current() == th::Preset::iOS; }
+bool NeonLook() { return th::NeonActive(); }
+
+float EaseOutCubic(float t) {
+  t = std::clamp(t, 0.0f, 1.0f);
+  const float u = 1.0f - t;
+  return 1.0f - u * u * u;
+}
 
 // Settings-app colours per section.
 ImVec4 TintFor(int category, Page page = Page::Count) {
@@ -218,7 +230,16 @@ ImVec4 TintFor(int category, Page page = Page::Count) {
 
 // Rounded-square badge with a white glyph (or the first letter when icon fonts are missing).
 void DrawIconBadge(ImDrawList* dl, ImVec2 topLeft, float size, const ImVec4& tint, const char* icon, const char* label) {
-  dl->AddRectFilled(topLeft, topLeft + ImVec2(size, size), Col(tint), size * 0.26f);
+  if (NeonLook()) {
+    // Diagonal neon gradient; each category starts at its own point on the gradient.
+    const float off = std::fmod((tint.x * 3.1f + tint.y * 1.7f + tint.z * 0.9f), 1.0f);
+    const int v0 = dl->VtxBuffer.Size;
+    dl->AddRectFilled(topLeft, topLeft + ImVec2(size, size), IM_COL32_WHITE, size * 0.30f);
+    ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, topLeft, topLeft + ImVec2(size, size), th::Neon(off),
+                                                  th::Neon(off + 0.28f));
+  } else {
+    dl->AddRectFilled(topLeft, topLeft + ImVec2(size, size), Col(tint), size * 0.26f);
+  }
   ImFont* font = render::GetFonts().body ? render::GetFonts().body : ImGui::GetFont();
   char letter[2] = {label && label[0] ? label[0] : '?', '\0'};
   const char* glyph = HasIcons() ? icon : letter;
@@ -455,9 +476,21 @@ bool MatchesSearch(const Feature& f, const char* query) {
 
 void DrawFeatureList(const std::vector<Feature*>& list, const char* query) {
   size_t shown = 0;
+  const float age = static_cast<float>(ImGui::GetTime() - g_menu.pageShownAt);
   for (Feature* f : list) {
     if (f == nullptr || !MatchesSearch(*f, query)) continue;
+    // Neon: cards cascade in one after another (fade + slide) when a page opens.
+    const float e = NeonLook() ? EaseOutCubic((age - static_cast<float>(shown) * 0.045f) / 0.32f) : 1.0f;
+    const float slide = (1.0f - e) * 18.0f * UiScale();
+    if (e < 1.0f) {
+      ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * e);
+      if (slide > 0.0f) ImGui::Indent(slide);
+    }
     DrawFeatureCard(*f);
+    if (e < 1.0f) {
+      if (slide > 0.0f) ImGui::Unindent(slide);
+      ImGui::PopStyleVar();
+    }
     ++shown;
   }
   if (shown == 0 && !list.empty()) {
@@ -964,7 +997,6 @@ void DrawSettingsPage() {
   if (BeginSettingsTable("##hud")) {
     ConfigToggleRow("Watermark", kCfgHudWatermark, st.hudWatermark, "Shows CHROMA and the menu key for a few seconds after loading and after closing the menu.");
     ConfigToggleRow("FPS counter", kCfgHudFps, st.hudFps);
-    ConfigToggleRow("Active features list", kCfgHudActive, st.hudActive, "Lists the features that are switched on along the right edge.");
     ConfigToggleRow("Player position", kCfgHudPosition, st.hudPosition);
     ImGui::EndTable();
   }
@@ -1190,10 +1222,13 @@ void DrawHeader(float height) {
   const ImVec2 wp = ImGui::GetWindowPos();
   const ImVec2 ws = ImGui::GetWindowSize();
 
-  dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + height), Col(p.bgAlt), style.WindowRounding, ImDrawFlags_RoundCornersTop);
+  dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + height), Col(p.bgAlt, NeonLook() ? 0.45f : 1.0f), style.WindowRounding,
+                    ImDrawFlags_RoundCornersTop);
   const float mid = wp.x + ws.x * 0.5f;
   const float ry = wp.y + height - 1.0f;
-  if (IosLook()) {
+  if (NeonLook()) {
+    th::DrawNeonBar(dl, ImVec2(wp.x + 18.0f * s, ry - 0.5f * s), ImVec2(wp.x + ws.x - 18.0f * s, ry + 1.0f), 0.55f);
+  } else if (IosLook()) {
     dl->AddLine(ImVec2(wp.x, ry), ImVec2(wp.x + ws.x, ry), Col(p.border));
   } else if (th::ChromaActive()) {
     th::DrawChromaBar(dl, ImVec2(wp.x, ry - 1.0f * s), ImVec2(wp.x + ws.x, ry + 1.0f), 0.95f);
@@ -1211,7 +1246,24 @@ void DrawHeader(float height) {
   const float titleSize = ImGui::GetFontSize();
   PopFont();
   const float titleY = wp.y + (height - titleSize) * 0.5f;
-  if (IosLook()) {
+  if (NeonLook()) {
+    // Gradient wordmark: each letter takes the flowing neon colour, with a soft glow and a
+    // brightness sweep that passes over it every few seconds.
+    const char* word = "CHROMA";
+    const float tracking = titleSize * 0.18f;
+    const float sweep = std::fmod(static_cast<float>(ImGui::GetTime()) * 0.35f, 1.6f) - 0.3f;
+    float cx = x;
+    for (int i = 0; word[i]; ++i) {
+      const char glyph[2] = {word[i], '\0'};
+      const float off = static_cast<float>(i) * 0.06f;
+      const float shine = std::max(0.0f, 1.0f - std::abs(sweep - static_cast<float>(i) / 6.0f) * 5.0f);
+      dl->AddText(titleFont, titleSize, ImVec2(cx, titleY + 1.5f * s), th::Neon(off, 0.35f), glyph);   // glow
+      dl->AddText(titleFont, titleSize, ImVec2(cx, titleY), th::Neon(off, 1.0f), glyph);
+      if (shine > 0.0f) dl->AddText(titleFont, titleSize, ImVec2(cx, titleY), Col(ImVec4(1, 1, 1, shine * 0.55f)), glyph);
+      cx += titleFont->CalcTextSizeA(titleSize, FLT_MAX, 0.0f, glyph).x + tracking;
+    }
+    x = cx - tracking;
+  } else if (IosLook()) {
     const char* word = "Chroma";
     const float ws2 = titleSize * 1.05f;
     dl->AddText(titleFont, ws2, ImVec2(x, titleY - (ws2 - titleSize) * 0.5f), Col(p.text), word);
@@ -1330,6 +1382,11 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
     TextColored(p.textFaint, label);
     PopFont();
   };
+  const bool neon = NeonLook();
+  if (neon) {
+    dl->ChannelsSplit(2);   // 0 = sliding pill (behind), 1 = items
+    dl->ChannelsSetCurrent(1);
+  }
   const auto item = [&](Page page) {
     const PageInfo& info = Info(page);
     ImGui::PushID(info.key);
@@ -1340,7 +1397,9 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
     if (pressed) NavigateTo(page);
     if (selected) selectedY = pos.y;
     const bool ios = IosLook();
-    if (ios) {
+    if (neon) {
+      if (hovered && !selected) dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.panelHover, 0.55f), style.FrameRounding);
+    } else if (ios) {
       // iPadOS sidebar: selected row is a solid blue pill with white text.
       if (selected) dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.accent), style.FrameRounding);
       else if (hovered) dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.panelHover, 0.8f), style.FrameRounding);
@@ -1349,7 +1408,8 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
     } else if (hovered) {
       dl->AddRectFilled(pos, pos + ImVec2(rowW, rowH), Col(p.panelHover, 0.7f), style.FrameRounding);
     }
-    const ImU32 col = ios ? Col(p.text) : Col(selected ? p.accent : hovered ? p.text : p.textDim);
+    const ImU32 col = ios ? Col(p.text) : neon ? Col(selected ? p.text : hovered ? p.text : p.textDim)
+                                             : Col(selected ? p.accent : hovered ? p.text : p.textDim);
     const float fs = ImGui::GetFontSize();
     float tx = pos.x + 12.0f * s;
     const float ty = pos.y + (rowH - fs) * 0.5f;
@@ -1358,7 +1418,7 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
       DrawIconBadge(dl, ImVec2(pos.x + 8.0f * s, pos.y + (rowH - bs) * 0.5f), bs, TintFor(info.category, page), info.icon, info.name);
       tx = pos.x + 8.0f * s + bs + 10.0f * s;
     } else if (HasIcons()) {
-      dl->AddText(render::GetFonts().body, fs, ImVec2(tx, ty), col, info.icon);
+      dl->AddText(render::GetFonts().body, fs, ImVec2(tx, ty), neon && selected ? th::Neon(0.15f) : col, info.icon);
       tx += fs * 1.7f;
     }
     dl->AddText(ImGui::GetFont(), fs, ImVec2(tx, ty), col, info.name);
@@ -1389,8 +1449,23 @@ void DrawSidebar(const std::array<int, static_cast<size_t>(Category::Count)>& ac
   item(Page::Settings);
   item(Page::About);
 
-  // Animated selection marker (the iOS look uses a filled pill instead).
-  if (selectedY >= 0.0f && !IosLook()) {
+  // Neon: a glowing gradient pill that glides to the selected row.
+  if (neon) {
+    dl->ChannelsSetCurrent(0);
+    if (selectedY >= 0.0f) {
+      g_menu.barY = g_menu.barY < 0.0f ? selectedY : Approach(g_menu.barY, selectedY, 16.0f);
+      const ImVec2 a(ImGui::GetCursorScreenPos().x, g_menu.barY);
+      const ImVec2 b(a.x + rowW, g_menu.barY + rowH);
+      const float r = style.FrameRounding;
+      dl->AddRectFilled(a - ImVec2(2, 2) * s, b + ImVec2(2, 2) * s, th::Neon(0.0f, 0.10f), r + 2.0f * s);   // glow
+      dl->AddRectFilled(a, b, Col(p.panelHover, 0.85f), r);
+      dl->AddRectFilledMultiColor(a + ImVec2(r * 0.5f, 0), ImVec2(b.x - r * 0.5f, b.y), th::Neon(0.0f, 0.30f), th::Neon(0.3f, 0.02f),
+                                  th::Neon(0.3f, 0.02f), th::Neon(0.0f, 0.30f));
+      const float inset = rowH * 0.24f;
+      dl->AddRectFilled(ImVec2(a.x + 2.0f * s, a.y + inset), ImVec2(a.x + 5.0f * s, b.y - inset), th::Neon(0.1f), 2.0f * s);
+    }
+    dl->ChannelsMerge();
+  } else if (selectedY >= 0.0f && !IosLook()) {
     g_menu.barY = g_menu.barY < 0.0f ? selectedY : Approach(g_menu.barY, selectedY, 18.0f);
     const float x = ImGui::GetWindowPos().x + 3.0f * s;
     const float inset = rowH * 0.22f;
@@ -1491,6 +1566,17 @@ void DrawMainMenu() {
   ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
   ImGui::SetNextWindowSize(ImVec2(980.0f * s, 640.0f * s), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSizeConstraints(ImVec2(720.0f * s, 480.0f * s), ImVec2(FLT_MAX, FLT_MAX));
+
+  // Open animation: the window fades in and glides up into place.
+  const int frame = ImGui::GetFrameCount();
+  if (frame - g_menu.lastDrawFrame > 2) g_menu.openT = NeonLook() ? 0.0f : 1.0f;
+  g_menu.lastDrawFrame = frame;
+  g_menu.openT = std::min(1.0f, g_menu.openT + ImGui::GetIO().DeltaTime / 0.32f);
+  const float openE = EaseOutCubic(g_menu.openT);
+  const bool opening = g_menu.openT < 1.0f;
+  if (opening && g_menu.haveRestPos)
+    ImGui::SetNextWindowPos(g_menu.restPos + ImVec2(0.0f, (1.0f - openE) * 34.0f * s), ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (0.15f + 0.85f * openE));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
   const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                                  ImGuiWindowFlags_NoScrollWithMouse;
@@ -1499,9 +1585,19 @@ void DrawMainMenu() {
   if (visible) {
     const ImVec2 wp = ImGui::GetWindowPos();
     const ImVec2 ws = ImGui::GetWindowSize();
+    if (!opening) {
+      g_menu.restPos = wp;
+      g_menu.haveRestPos = true;
+    }
+    if (NeonLook()) th::DrawAurora(ImGui::GetWindowDrawList(), wp, wp + ws, 1.0f);
     const float headerH = std::round(ImGui::GetFrameHeight() * 1.95f + 8.0f * s);
     DrawHeader(headerH);
-    if (th::ChromaActive()) {
+    if (NeonLook()) {
+      ImDrawList* fg = ImGui::GetWindowDrawList();
+      fg->PushClipRect(wp - ImVec2(10, 10), wp + ws + ImVec2(10, 10), false);
+      th::DrawNeonBorder(fg, wp + ImVec2(1, 1), wp + ws - ImVec2(1, 1), ImGui::GetStyle().WindowRounding, 1.6f * s);
+      fg->PopClipRect();
+    } else if (th::ChromaActive()) {
       ImDrawList* fg = ImGui::GetWindowDrawList();
       fg->PushClipRect(wp - ImVec2(8, 8), wp + ws + ImVec2(8, 8), false);
       th::DrawChromaBorder(fg, wp + ImVec2(1, 1), wp + ws - ImVec2(1, 1), ImGui::GetStyle().WindowRounding, 2.0f * s);
@@ -1514,9 +1610,9 @@ void DrawMainMenu() {
     const float bodyH = std::max(bottom - top, 1.0f);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(ImVec2(wp.x, top), ImVec2(wp.x + sidebarW, bottom), Col(Mix(p.bg, p.bgAlt, 0.55f)), ImGui::GetStyle().WindowRounding,
-                      ImDrawFlags_RoundCornersBottomLeft);
-    dl->AddLine(ImVec2(wp.x + sidebarW, top), ImVec2(wp.x + sidebarW, bottom), Col(p.border));
+    dl->AddRectFilled(ImVec2(wp.x, top), ImVec2(wp.x + sidebarW, bottom), Col(Mix(p.bg, p.bgAlt, 0.55f), NeonLook() ? 0.55f : 1.0f),
+                      ImGui::GetStyle().WindowRounding, ImDrawFlags_RoundCornersBottomLeft);
+    dl->AddLine(ImVec2(wp.x + sidebarW, top), ImVec2(wp.x + sidebarW, bottom), Col(p.border, NeonLook() ? 0.6f : 1.0f));
 
     std::array<int, static_cast<size_t>(Category::Count)> activeCounts{};
     for (const auto& f : features::Registry::Get().All()) {
@@ -1536,6 +1632,7 @@ void DrawMainMenu() {
     if (g_menu.shownPage != g_menu.page) {
       g_menu.shownPage = g_menu.page;
       g_menu.pageFade = 0.0f;
+      g_menu.pageShownAt = ImGui::GetTime();
       g_menu.scaleEdit = -1.0f;
       if (g_menu.page == Page::Settings) g_menu.profilesDirty = true;
     }
@@ -1548,14 +1645,19 @@ void DrawMainMenu() {
                       ImGuiWindowFlags_NoBackground);
     ImGui::PopStyleVar();
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * (0.35f + 0.65f * g_menu.pageFade));
+    // Neon: the page slides in from the right as it fades.
+    const float pageSlide = NeonLook() ? (1.0f - EaseOutCubic(g_menu.pageFade)) * 26.0f * s : 0.0f;
+    if (pageSlide > 0.5f) ImGui::Indent(pageSlide);
     const Page page = g_menu.page;
     RunGuarded(PageName(page), [page] { DrawPage(page); });
+    if (pageSlide > 0.5f) ImGui::Unindent(pageSlide);
     ImGui::PopStyleVar();
     ImGui::EndChild();
 
     DrawUnloadPopup();
   }
   ImGui::End();
+  ImGui::PopStyleVar();   // open-animation alpha
 }
 
 }  // namespace cg::ui::detail

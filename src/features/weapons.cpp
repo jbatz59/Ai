@@ -203,11 +203,8 @@ void RegisterWeaponFeatures(Registry& r) {
                                        "local p = CG.need(CG.player())\nCG.must(CG.call(p, \"InventorySetUnlimitedAmmo\", true))",
                                        "local p = CG.need(CG.player())\nCG.call(p, \"InventorySetUnlimitedAmmo\", false)", 3.f));
   r.Add(std::make_unique<ScriptAction>("weapons.refill", "Refill ammo", Category::Weapons,
-                                       "Tops up the weapon in hand (falls back to reloading the inventory loadout).",
-                                       R"(local p = CG.need(CG.player())
-local ok, w = CG.call(p, "InventoryGetSelected")
-if ok and w ~= nil and CG.call(p, "InventoryAddWeapon", w, 500) then return end
-CG.must(CG.call(p, "InventoryLoadWeapons")))"));
+                                       "Max ammo for every weapon you carry.",
+                                       "local p = CG.need(CG.player())\nCG.must(CG.call(p, \"InventoryLoadWeapons\"))"));
   r.Add(std::make_unique<Grenades>());
   r.Add(std::make_unique<GiveWeapon>());
 }
